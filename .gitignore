@@ -1,0 +1,15 @@
+# Build and simulation outputs
+build/
+*.vvp
+*.vcd
+*.fst
+*.elf
+*.o
+*.su
+*.exe
+xsim.dir/
+*.jou
+*.log
+*.pb
+*.wdb
+obj_dir/
