@@ -133,9 +133,10 @@ static void test_pdi_and_init(void)
     mock_hal_reset();
     check_cond(SM5800_OK == sm5800_init(&drv, &cfg),
                "TC-DRV-03: nominal 100Hz init");
-    check_cond(SM5800_INT_MSG2_RDY_MASK
+    check_cond((SM5800_INT_MSG2_RDY_MASK | SM5800_INT_IMU_FAULT_MASK
+                | SM5800_INT_TIMEOUT_MASK)
                == mock_hal_get_reg(SM5800_REG_INT_ENABLE),
-               "TC-DRV-03: INT_ENABLE == MSG2_READY");
+               "TC-DRV-03: INT_ENABLE == MSG2 | IMU_FAULT | TIMEOUT");
     check_cond(0U != (mock_hal_get_reg(SM5800_REG_CTRL)
                       & SM5800_CTRL_MSG2_ONLY_MASK),
                "TC-DRV-03: CTRL.MSG2_ONLY_MODE set");
@@ -181,7 +182,8 @@ static void test_isr_read_and_convert(void)
     mock_hal_set_reg(SM5800_REG_DELTA_ANG_Z, 0xFFFFFFFFU);
     mock_hal_set_reg(SM5800_REG_DELTA_VEL_X, 0x0041F372U);
     mock_hal_set_reg(SM5800_REG_DELTA_VEL_Y, 0x00000000U);
-    mock_hal_set_reg(SM5800_REG_DELTA_VEL_Z, 0x0041F372U);
+    /* 1 g x 10 ms = 0.0980665 m/s -> 43183277 LSB (2^-27 ft/s per LSB) */
+    mock_hal_set_reg(SM5800_REG_DELTA_VEL_Z, 0x0292ECADU);
     mock_hal_set_reg(SM5800_REG_STATUS_WORD1, 0xF6F5U);
     mock_hal_set_reg(SM5800_REG_STATUS_WORD2, 0xF807U);
     mock_hal_set_reg(SM5800_REG_SP_TIMESTAMP, 123456U);
@@ -213,8 +215,8 @@ static void test_isr_read_and_convert(void)
                "TC-DRV-08: 879 LSB -> ~9.81 m/s^2 (1g)");
     check_cond(is_near_f(eng.delta_ang_y_rad, 0.0010f, 0.00001f),
                "TC-DRV-08: 8589935 LSB -> 0.001 rad");
-    check_cond(is_near_f(eng.delta_vel_z_m_s, 0.09815f, 0.001f),
-               "TC-DRV-08: 4322274 LSB -> 0.0981 m/s");
+    check_cond(is_near_f(eng.delta_vel_z_m_s, 0.0980665f, 0.00001f),
+               "TC-DRV-08: 43183277 LSB -> 0.09807 m/s");
     check_cond(eng.accel_temp_degc == -10,
                "TC-DRV-08: 0xF6 -> -10 degC");
     check_cond(eng.bit_fault_mask == 0x01FFU,
@@ -303,6 +305,50 @@ static void test_reset_bit_and_diag(void)
 }
 
 
+static void test_fault_irq(void)
+{
+    sm5800_drv_t drv = { .state = SM5800_STATE_UNINIT };
+    sm5800_config_t cfg = make_valid_cfg();
+    uint32_t faults = 0xFFFFFFFFU;
+
+    /* TC-DRV-17: fault IRQs reach the PS even when no Msg 02 arrives */
+    mock_hal_reset();
+    check_cond(SM5800_ERR_STATE == sm5800_take_irq_faults(&drv, &faults),
+               "TC-DRV-17: take_irq_faults before init -> ERR_STATE");
+    (void)sm5800_init(&drv, &cfg);
+    check_cond(SM5800_ERR_PARAM == sm5800_take_irq_faults(NULL, &faults),
+               "TC-DRV-17: NULL handle -> ERR_PARAM");
+    check_cond(SM5800_ERR_PARAM == sm5800_take_irq_faults(&drv, NULL),
+               "TC-DRV-17: NULL output -> ERR_PARAM");
+
+    check_cond(SM5800_OK == sm5800_take_irq_faults(&drv, &faults),
+               "TC-DRV-17: take_irq_faults OK when idle");
+    check_cond(0U == faults, "TC-DRV-17: no faults after init");
+
+    /* Sensor goes silent: FPGA raises only LINK_TIMEOUT (no MSG2_READY) */
+    mock_hal_set_reg(SM5800_REG_INT_STATUS, SM5800_INT_TIMEOUT_MASK);
+    sm5800_irq_isr(&drv);
+    check_cond(0U == mock_hal_get_reg(SM5800_REG_INT_STATUS),
+               "TC-DRV-17: ISR acknowledged LINK_TIMEOUT (W1C)");
+    check_cond(!sm5800_is_msg2_pending(&drv),
+               "TC-DRV-17: LINK_TIMEOUT does not fake a Msg 02 sample");
+
+    /* Second event before the application polls: flags accumulate */
+    mock_hal_set_reg(SM5800_REG_INT_STATUS, SM5800_INT_IMU_FAULT_MASK);
+    sm5800_irq_isr(&drv);
+
+    check_cond(SM5800_OK == sm5800_take_irq_faults(&drv, &faults),
+               "TC-DRV-17: take_irq_faults OK");
+    check_cond((SM5800_INT_TIMEOUT_MASK | SM5800_INT_IMU_FAULT_MASK)
+               == faults,
+               "TC-DRV-17: TIMEOUT and IMU_FAULT both reported");
+
+    check_cond(SM5800_OK == sm5800_take_irq_faults(&drv, &faults),
+               "TC-DRV-17: second take_irq_faults OK");
+    check_cond(0U == faults, "TC-DRV-17: faults cleared after take");
+}
+
+
 int main(void)
 {
     int exit_code = 0;
@@ -310,6 +356,7 @@ int main(void)
     test_pdi_and_init();
     test_isr_read_and_convert();
     test_reset_bit_and_diag();
+    test_fault_irq();
 
     (void)printf("==================================================\n");
     (void)printf("SM-5800 Driver Unit Tests: %u passed, %u failed\n",

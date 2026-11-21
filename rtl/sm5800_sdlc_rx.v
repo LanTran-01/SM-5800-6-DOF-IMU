@@ -60,7 +60,8 @@ module sm5800_sdlc_rx (
     reg [3:0]  skip_cnt_r;         // Flushes 8 flag bits out of raw_sr_r after flag detect
     reg [2:0]  ones_cnt_r;         // Consecutive '1' counter for zero destuffing (0..5)
     reg [2:0]  bit_cnt_r;          // Destuffed bit index within current octet (0..7)
-    reg [7:0]  byte_sr_r;          // LSB-first byte shift register
+    reg [6:0]  byte_sr_r;          // LSB-first byte shift register (7 oldest bits;
+                                  // 8th bit comes straight from out_bit_w)
     reg        has_bits_r;         // 1 once >=1 destuffed data bit received in current frame
 
     reg        rx_byte_valid_r;
@@ -110,7 +111,7 @@ module sm5800_sdlc_rx (
     assign final_crc_w        = is_data_bit_w ? crc_next_w : crc_curr_w;
     assign final_bit_cnt_w    = is_data_bit_w ? (bit_cnt_r + 3'd1) : bit_cnt_r;
     assign final_has_bits_w   = has_bits_r || is_data_bit_w;
-    assign next_byte_w        = {out_bit_w, byte_sr_r[7:1]};
+    assign next_byte_w        = {out_bit_w, byte_sr_r};
 
     // CRC control: reset to 0xFFFF on soft reset, flag, abort, stuff error, or hunt state
     assign crc_init_w      = soft_rst_i ||
@@ -140,7 +141,7 @@ module sm5800_sdlc_rx (
             skip_cnt_r          <= 4'd0;
             ones_cnt_r          <= 3'd0;
             bit_cnt_r           <= 3'd0;
-            byte_sr_r           <= 8'h00;
+            byte_sr_r           <= 7'h00;
             has_bits_r          <= 1'b0;
             rx_byte_valid_r     <= 1'b0;
             rx_byte_r           <= 8'h00;
@@ -157,7 +158,7 @@ module sm5800_sdlc_rx (
             skip_cnt_r          <= 4'd0;
             ones_cnt_r          <= 3'd0;
             bit_cnt_r           <= 3'd0;
-            byte_sr_r           <= 8'h00;
+            byte_sr_r           <= 7'h00;
             has_bits_r          <= 1'b0;
             rx_byte_valid_r     <= 1'b0;
             frame_end_d1_r      <= 1'b0;
@@ -185,7 +186,7 @@ module sm5800_sdlc_rx (
                         skip_cnt_r      <= 4'd8; // Flush the 8 opening-flag bits
                         ones_cnt_r      <= 3'd0;
                         bit_cnt_r       <= 3'd0;
-                        byte_sr_r       <= 8'h00;
+                        byte_sr_r       <= 7'h00;
                         has_bits_r      <= 1'b0;
                         flag_detected_r <= 1'b1;
                     end
@@ -202,7 +203,7 @@ module sm5800_sdlc_rx (
                         skip_cnt_r <= 4'd0;
                         ones_cnt_r <= 3'd0;
                         bit_cnt_r  <= 3'd0;
-                        byte_sr_r  <= 8'h00;
+                        byte_sr_r  <= 7'h00;
                         has_bits_r <= 1'b0;
                     end else if (is_stuff_err_w) begin
                         // Defensive guard: six '1's without valid flag/abort lookahead
@@ -211,7 +212,7 @@ module sm5800_sdlc_rx (
                         skip_cnt_r    <= 4'd0;
                         ones_cnt_r    <= 3'd0;
                         bit_cnt_r     <= 3'd0;
-                        byte_sr_r     <= 8'h00;
+                        byte_sr_r     <= 7'h00;
                         has_bits_r    <= 1'b0;
                     end else begin
                         // Step 1: Emit completed byte if out_bit_w completes an octet
@@ -236,7 +237,7 @@ module sm5800_sdlc_rx (
                             skip_cnt_r <= 4'd8;
                             ones_cnt_r <= 3'd0;
                             bit_cnt_r  <= 3'd0;
-                            byte_sr_r  <= 8'h00;
+                            byte_sr_r  <= 7'h00;
                             has_bits_r <= 1'b0;
                         end else begin
                             // Normal bit progression within frame
@@ -248,7 +249,7 @@ module sm5800_sdlc_rx (
                             end else begin
                                 // Valid destuffed data bit
                                 ones_cnt_r <= out_bit_w ? (ones_cnt_r + 3'd1) : 3'd0;
-                                byte_sr_r  <= next_byte_w;
+                                byte_sr_r  <= next_byte_w[7:1];
                                 bit_cnt_r  <= bit_cnt_r + 3'd1; // Wraps 7 -> 0 naturally
                                 has_bits_r <= 1'b1;
                             end

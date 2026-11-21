@@ -215,6 +215,21 @@ sm5800_status_t sm5800_deinit(sm5800_drv_t * p_drv);
 void sm5800_irq_isr(sm5800_drv_t * p_drv);
 
 /**
+ * @brief       Fetch and clear fault IRQ flags latched by sm5800_irq_isr().
+ * @req         LLR-SM5800-DRV-028
+ * @design      SDD-SM5800-3.3.19
+ * @param[in]   p_drv     Initialized driver handle, must not be NULL.
+ * @param[out]  p_faults  Latched SM5800_INT_* bits other than MSG2_READY
+ *                        (e.g. TIMEOUT = sensor silent, IMU_FAULT = BIT
+ *                        fault), must not be NULL. 0 when nothing new.
+ * @return      SM5800_OK, SM5800_ERR_PARAM, SM5800_ERR_STATE.
+ * @note        Not ISR-safe. Read-and-clear runs in a critical section so
+ *              no flag set by a concurrent IRQ is lost. WCET: O(1).
+ */
+sm5800_status_t sm5800_take_irq_faults(sm5800_drv_t * p_drv,
+                                       uint32_t * p_faults);
+
+/**
  * @brief       Check whether a new 100 Hz Msg ID 02 sample was flagged by ISR.
  * @req         LLR-SM5800-DRV-014
  * @design      SDD-SM5800-3.3.5

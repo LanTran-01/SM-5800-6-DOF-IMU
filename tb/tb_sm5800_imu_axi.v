@@ -15,6 +15,8 @@
 //               [T9]  Commanded BIT control (BIT_L) & flag-only operation
 //               [T10] Hardware-timed RESET_L pulse (>1.0 ms spec verification)
 //               [T11] Data watchdog timeout & LINK_TIMEOUT interrupt
+//               [T14] Runt frames / stuck-low line between frames (ISO 3309)
+//               [T15] Watchdog start-up silence, one-shot, re-arm, safe default
 //==============================================================================
 
 `timescale 1ns / 1ps
@@ -103,6 +105,7 @@ module tb_sm5800_imu_axi;
     integer     err_cnt;
     integer     test_pass_cnt;
     integer     msg1_pin_cnt;
+    integer     t14_pin_base;
     integer     msg2_pin_cnt;
     reg  [31:0] rd_val;
     integer     i;
@@ -152,6 +155,44 @@ module tb_sm5800_imu_axi;
         .imu_ser_data_i (imu_ser_data_w),
         .imu_bit_l_o    (imu_bit_l_o),
         .imu_reset_l_o  (imu_reset_l_o)
+    );
+
+    //--------------------------------------------------------------------------
+    // Second DUT: IP packaged for 100 Hz use (MSG2_ONLY default) with every
+    // other parameter left at its default. Only its reset values are checked
+    // ([T15d]); its AXI port is idle and its SER_DATA input is held at mark.
+    //--------------------------------------------------------------------------
+    sm5800_imu_axi_top #(
+        .C_DEFAULT_MSG2_ONLY  (1)
+    ) u_dut_dflt (
+        .s_axi_aclk     (s_axi_aclk),
+        .s_axi_aresetn  (s_axi_aresetn),
+        .s_axi_awaddr   (8'h00),
+        .s_axi_awprot   (3'b000),
+        .s_axi_awvalid  (1'b0),
+        .s_axi_awready  (),
+        .s_axi_wdata    (32'd0),
+        .s_axi_wstrb    (4'h0),
+        .s_axi_wvalid   (1'b0),
+        .s_axi_wready   (),
+        .s_axi_bresp    (),
+        .s_axi_bvalid   (),
+        .s_axi_bready   (1'b1),
+        .s_axi_araddr   (8'h00),
+        .s_axi_arprot   (3'b000),
+        .s_axi_arvalid  (1'b0),
+        .s_axi_arready  (),
+        .s_axi_rdata    (),
+        .s_axi_rresp    (),
+        .s_axi_rvalid   (),
+        .s_axi_rready   (1'b1),
+        .irq_o          (),
+        .msg1_valid_o   (),
+        .msg2_valid_o   (),
+        .imu_rcv_clk_o  (),
+        .imu_ser_data_i (1'b1),
+        .imu_bit_l_o    (),
+        .imu_reset_l_o  ()
     );
 
     // Track dedicated Msg 01 / Msg 02 strobe output pins
@@ -724,6 +765,109 @@ module tb_sm5800_imu_axi;
         axi_read(ADDR_DELTA_VEL_Z, rd_val); check_eq(rd_val, 32'hFFBE_0C8E, "Msg2 updated DELTA_VEL_Z");
         axi_read(ADDR_INT_STATUS,  rd_val); check_eq(rd_val & 32'h0000_0002, 32'h0000_0002, "INT_STATUS.MSG2_READY set");
         axi_write(ADDR_INT_STATUS, 32'h0000_007F, 4'hF, 2'd0);
+
+        //----------------------------------------------------------------------
+        // [T14] Runt-frame robustness (ISO 3309: < 32 bits between flags)
+        //----------------------------------------------------------------------
+        $display("[T14] Testing runt frames / stuck-low line between frames...");
+        axi_write(ADDR_CTRL,        32'h0000_0101, 4'hF, 2'd0); // CLK_EN=1, CLEAR_STATS, normal mode
+        axi_write(ADDR_INT_ENABLE,  32'h0000_007F, 4'hF, 2'd0);
+        axi_write(ADDR_INT_STATUS,  32'h0000_007F, 4'hF, 2'd0);
+        t14_pin_base = msg1_pin_cnt;
+
+        // 14a. Flag, line stuck low for 5 bit periods, then a valid Msg 1
+        //      (this is what produced "ghost frames" before the fix)
+        u_sensor.send_flag();
+        u_sensor.send_raw_zeros(5);
+        u_sensor.send_msg1(
+            8'h0A,
+            16'h0A0A, 16'h0B0B, 16'h0C0C,
+            16'h0D0D, 16'h0E0E, 16'h0F0F,
+            16'h1905, 16'h0003,
+            1'b1, 1'b0, 1'b0
+        );
+        wait_rx_settle();
+        axi_read(ADDR_ANG_RATE_X,    rd_val); check_eq(rd_val, 32'h0000_0A0A, "T14a valid Msg1 after stuck-low bits");
+        axi_read(ADDR_MSG1_RX_CNT,   rd_val); check_eq(rd_val, 32'd1, "T14a MSG1_RX_CNT == 1");
+        axi_read(ADDR_CRC_ERR_CNT,   rd_val); check_eq(rd_val, 32'd0, "T14a runt not counted as CRC error");
+        axi_read(ADDR_FRAME_ERR_CNT, rd_val); check_eq(rd_val, 32'd0, "T14a runt not counted as frame error");
+        axi_read(ADDR_INT_STATUS,    rd_val); check_eq(rd_val & 32'h08, 32'h00, "T14a no RX_ERROR on runt");
+        axi_read(ADDR_DEBUG_CRC,     rd_val); check_eq(rd_val, 32'h0A14_F0B8, "T14a DEBUG_CRC not overwritten by runt");
+
+        // 14b. 3-byte runt (24 bits) between flags -> silently ignored
+        u_sensor.send_runt_frame(3);
+        wait_rx_settle();
+        axi_read(ADDR_CRC_ERR_CNT,   rd_val); check_eq(rd_val, 32'd0, "T14b 24-bit runt ignored (CRC)");
+        axi_read(ADDR_FRAME_ERR_CNT, rd_val); check_eq(rd_val, 32'd0, "T14b 24-bit runt ignored (FRAME)");
+        axi_read(ADDR_INT_STATUS,    rd_val); check_eq(rd_val & 32'h08, 32'h00, "T14b no RX_ERROR on 24-bit runt");
+
+        // 14c. Boundary: 4 bytes (32 bits) is a real (bad) frame -> must be reported
+        u_sensor.send_runt_frame(4);
+        wait_rx_settle();
+        axi_read(ADDR_CRC_ERR_CNT,   rd_val); check_eq(rd_val, 32'd1, "T14c 32-bit frame counted (CRC)");
+        axi_read(ADDR_FRAME_ERR_CNT, rd_val); check_eq(rd_val & 32'hFFFF, 32'd1, "T14c 32-bit frame counted (FRAME)");
+        axi_read(ADDR_INT_STATUS,    rd_val); check_eq(rd_val & 32'h08, 32'h08, "T14c RX_ERROR on 32-bit bad frame");
+        axi_write(ADDR_INT_STATUS, 32'h0000_007F, 4'hF, 2'd0);
+
+        // 14d. Link still healthy afterwards: next Msg 1 (cnt 6) accepted, no seq gap
+        u_sensor.send_msg1(
+            8'h0A,
+            16'h0606, 16'h0606, 16'h0606,
+            16'h0606, 16'h0606, 16'h0606,
+            16'h1906, 16'h0003,
+            1'b1, 1'b0, 1'b0
+        );
+        wait_rx_settle();
+        axi_read(ADDR_ANG_RATE_X,  rd_val); check_eq(rd_val, 32'h0000_0606, "T14d Msg1 accepted after runts");
+        axi_read(ADDR_SEQ_ERR_CNT, rd_val); check_eq(rd_val, 32'd0, "T14d no false SEQ_GAP from runts");
+        check_eq(msg1_pin_cnt - t14_pin_base, 32'd2, "T14 msg1_valid_o pulsed exactly twice");
+
+        //----------------------------------------------------------------------
+        // [T15] Watchdog: start-up silence, one-shot IRQ, re-arm, safe defaults
+        //----------------------------------------------------------------------
+        $display("[T15] Testing watchdog on start-up silence & 100 Hz-safe defaults...");
+        axi_write(ADDR_TIMEOUT_CFG, 32'd150,       4'hF, 2'd0); // 150 us for fast sim
+        axi_write(ADDR_CTRL,        32'h0000_0201, 4'hF, 2'd0); // CLK_EN + SOFT_RESET
+        axi_write(ADDR_INT_ENABLE,  32'h0000_007F, 4'hF, 2'd0);
+        axi_write(ADDR_INT_STATUS,  32'h0000_007F, 4'hF, 2'd0);
+
+        // 15a. Sensor alive (flags) but NEVER sends data after reset -> must time out
+        u_sensor.send_idle_flags(25); // 200 us > 150 us
+        wait_rx_settle();
+        axi_read(ADDR_STATUS, rd_val);
+        check_eq(rd_val & 32'h0000_0003, 32'h0000_0001, "T15a FLAGS_ALIVE=1, DATA_ACTIVE=0");
+        axi_read(ADDR_INT_STATUS, rd_val);
+        check_eq(rd_val & 32'h0000_0020, 32'h0000_0020, "T15a LINK_TIMEOUT when no data ever arrives");
+
+        // 15b. Still silent: timeout is one-shot (no interrupt storm)
+        axi_write(ADDR_INT_STATUS, 32'h0000_007F, 4'hF, 2'd0);
+        u_sensor.send_idle_flags(25);
+        wait_rx_settle();
+        axi_read(ADDR_INT_STATUS, rd_val);
+        check_eq(rd_val & 32'h0000_0020, 32'h0000_0000, "T15b LINK_TIMEOUT not repeated while silent");
+
+        // 15c. Data returns -> DATA_ACTIVE, then silence again -> re-armed timeout
+        u_sensor.send_msg1(
+            8'h0A,
+            16'h1515, 16'h1515, 16'h1515,
+            16'h1515, 16'h1515, 16'h1515,
+            16'h1901, 16'h0003,
+            1'b1, 1'b0, 1'b0
+        );
+        wait_rx_settle();
+        axi_read(ADDR_STATUS, rd_val);
+        check_eq(rd_val & 32'h0000_0002, 32'h0000_0002, "T15c DATA_ACTIVE=1 after valid frame");
+        axi_write(ADDR_INT_STATUS, 32'h0000_007F, 4'hF, 2'd0);
+        u_sensor.send_idle_flags(25);
+        wait_rx_settle();
+        axi_read(ADDR_INT_STATUS, rd_val);
+        check_eq(rd_val & 32'h0000_0020, 32'h0000_0020, "T15c LINK_TIMEOUT re-armed after data");
+        axi_write(ADDR_INT_STATUS, 32'h0000_007F, 4'hF, 2'd0);
+
+        // 15d. IP instantiated for 100 Hz (MSG2_ONLY) with default parameters:
+        //      reset TIMEOUT_CFG must exceed the 10 ms Msg 02 period with margin
+        check_eq({31'd0, (u_dut_dflt.u_axi4_lite_if.timeout_cfg_r >= 32'd12000)}, 32'd1,
+                 "T15d default TIMEOUT_CFG >= 12 ms in 100 Hz mode");
 
         //----------------------------------------------------------------------
         // Final Summary

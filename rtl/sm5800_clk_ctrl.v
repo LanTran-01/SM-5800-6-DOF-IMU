@@ -48,17 +48,44 @@ module sm5800_clk_ctrl #(
 );
 
     //--------------------------------------------------------------------------
-    // Derived timing parameters (integer truncation checked against spec +/-2%)
+    // Derived timing parameters (computed as 32-bit integers, then sliced to
+    // the 16-bit counter width; the guards below make the slice lossless)
     //--------------------------------------------------------------------------
-    localparam integer P_CLK_PERIOD_INT = (C_CLK_FREQ_HZ / C_SDLC_CLK_HZ);
-    localparam integer P_HALF_LOW_INT   = (P_CLK_PERIOD_INT / 2);
-    localparam integer P_US_PERIOD_INT  = (C_CLK_FREQ_HZ / 1_000_000);
-
-    localparam [15:0] P_CLK_PERIOD_LAST = P_CLK_PERIOD_INT - 1;
-    localparam [15:0] P_HALF_LOW_CYC    = P_HALF_LOW_INT;
-    localparam [15:0] P_US_PERIOD_LAST  = P_US_PERIOD_INT - 1;
+    localparam integer P_CLK_PERIOD_INT  = (C_CLK_FREQ_HZ / C_SDLC_CLK_HZ);
+    localparam integer P_HALF_LOW_INT    = (P_CLK_PERIOD_INT / 2);
+    localparam integer P_US_PERIOD_INT   = (C_CLK_FREQ_HZ / 1_000_000);
+    localparam integer P_CLK_LAST_INT    = P_CLK_PERIOD_INT - 1;
+    localparam integer P_US_LAST_INT     = P_US_PERIOD_INT - 1;
     // Add +1 us so pulse duration is strictly > C_RESET_PULSE_US regardless of phase
-    localparam [15:0] P_RST_PULSE_LOAD  = C_RESET_PULSE_US + 1;
+    localparam integer P_RST_LOAD_INT    = C_RESET_PULSE_US + 1;
+
+    localparam [15:0] P_CLK_PERIOD_LAST = P_CLK_LAST_INT[15:0];
+    localparam [15:0] P_HALF_LOW_CYC    = P_HALF_LOW_INT[15:0];
+    localparam [15:0] P_US_PERIOD_LAST  = P_US_LAST_INT[15:0];
+    localparam [15:0] P_RST_PULSE_LOAD  = P_RST_LOAD_INT[15:0];
+
+    //--------------------------------------------------------------------------
+    // Elaboration-time parameter guards (Verilog-2001 has no $error): an
+    // illegal configuration instantiates a non-existent module whose name
+    // states the problem, so synthesis / simulation stops immediately.
+    //   1. RCV_CLK must be within +/-2 % of C_SDLC_CLK_HZ (SM-5800 Table 5):
+    //      f_out = CLK / P >= f_target, error = r / (P * f_target) <= 1/50
+    //   2. Counters are 16 bits: divider >= 2 and <= 65535 cycles
+    //   3. RESET_L pulse must be > 1000 us (Sec. 4.4) and fit 16 bits
+    //--------------------------------------------------------------------------
+    generate
+        if ((P_CLK_PERIOD_INT < 2) || (P_CLK_PERIOD_INT > 65535) ||
+            (P_US_PERIOD_INT < 1) || (P_US_PERIOD_INT > 65535)) begin : g_err_div
+            SM5800_PARAM_ERROR_CLK_DIVIDER_OUT_OF_16BIT_RANGE u_param_error ();
+        end
+        if ((50 * (C_CLK_FREQ_HZ % C_SDLC_CLK_HZ)) >
+            (P_CLK_PERIOD_INT * C_SDLC_CLK_HZ)) begin : g_err_freq
+            SM5800_PARAM_ERROR_RCV_CLK_OUTSIDE_2PCT_TOLERANCE u_param_error ();
+        end
+        if ((C_RESET_PULSE_US <= 1000) || (C_RESET_PULSE_US >= 65535)) begin : g_err_rst
+            SM5800_PARAM_ERROR_RESET_PULSE_US_NOT_IN_1001_TO_65534 u_param_error ();
+        end
+    endgenerate
 
     //--------------------------------------------------------------------------
     // Internal registers

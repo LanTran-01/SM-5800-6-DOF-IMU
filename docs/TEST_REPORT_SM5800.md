@@ -17,14 +17,16 @@
 | 1. Kiểm chứng thuật toán CRC-16-CCITT & SDLC Deframer (mức bit) | PowerShell bit-exact model | 7 | 7 | 0 | 0 | **PASS** |
 | 2. Kiểm tra tĩnh Verilog-2001 & kết nối cổng RTL | Automated Static Lint | 8 tệp | 8 | 0 | 0 | **PASS** |
 | 3. Kiểm tra tĩnh C Rules (MISRA C:2012 + BARR-C + DO-178C) | Automated Static Audit | 6 tệp | 6 | 0 | 0 | **PASS** |
-| 4. Kiểm chứng hệ số quy đổi vật lý 100 Hz (`sm5800_raw_to_eng_msg2`) | Analytical / Vector Check | 5 | 5 | 0 | 0 | **PASS** |
+| 4. Kiểm chứng hệ số quy đổi vật lý 100 Hz (`sm5800_raw_to_eng_msg2`) | Analytical / Vector Check | 5 | 5 | 0 | 0 | **PASS** (vector `Delta Velocity Z` đã được sửa — bản gốc ghi PASS nhưng sai 10 lần) |
 | 5. Kiểm tra truy vết hai chiều (`HLR ↔ LLR ↔ SDD ↔ Code`) | Automated Tag Audit | 64 LLR (12 RTL + 52 C) | 64 | 0 | 0 | **PASS** |
-| 6. Mô phỏng RTL Testbench (`tb/tb_sm5800_imu_axi.v`, `[T1]`–`[T13]`) | Vivado `xsim` / `iverilog` | 13 | 0 | 0 | 13 | **PENDING_TARGET_EXEC** |
-| 7. Biên dịch chéo ARM GCC §12 & phân tích WCSU (`.su`) | `arm-none-eabi-gcc` | 3 tệp `.c` | 0 | 0 | 3 | **PENDING_TARGET_EXEC** |
-| 8. Unit Test C + Phủ cấu trúc MC/DC (`TC-DRV-01`–`TC-DRV-16`) | Target / Host Mock HAL | 16 | 0 | 0 | 16 | **PENDING_TARGET_EXEC** |
+| 6. Mô phỏng RTL Testbench (`tb/tb_sm5800_imu_axi.v`, `[T1]`–`[T14]`) | Icarus Verilog `iverilog -g2001` | 14 (200 assertion) | 14 | 0 | 0 | **PASS** (sau khi sửa lỗi khung cụt/runt frame; bản gốc: 4 lỗi ở T3/T4/T7) |
+| 7. Biên dịch chéo ARM GCC §12 & phân tích WCSU (`.su`) | `arm-none-eabi-gcc 13.2.1`, `-mcpu=cortex-a9` | 3 tệp `.c` | 3 | 0 | 0 | **PASS** (0 warning; stack lớn nhất 128 B ≤ 256 B; ISR `sm5800_irq_isr`: 0 lệnh VFP/NEON, 0 vòng lặp, `dsb` sau W1C, `dmb` trước khi thoát) |
+| 8. Unit Test C (`TC-DRV-01`–`TC-DRV-16`) | Host GCC 13 + Mock HAL | 16 (56 assertion) | 16 | 0 | 0 | **PASS** trên host (bản gốc: `TC-DRV-08` lỗi do vector sai 10 lần). Độ phủ MC/DC: chưa đo |
 | 9. Kiểm thử phần cứng HIL với cảm biến SM-5800 vật lý | Zynq PS/PL + SM-5800 | 4 | 0 | 0 | 4 | **PENDING_TARGET_EXEC** |
 
 > **Ghi chú minh bạch:** Môi trường sinh mã hiện tại không cài sẵn `iverilog`/`xsim`/`arm-none-eabi-gcc` và chưa kết nối phần cứng SM-5800 thật. Các mục 1–5 đã được thực thi và kiểm chứng trực tiếp đạt `PASS` (0 lỗi); các mục 6–9 đã có đủ kịch bản, testbench và lệnh thực thi để team chạy ký duyệt trên máy phát triển EDA/phòng lab.
+>
+> **Cập nhật sau rà soát độc lập (2026-11-20):** Mục 6 (`make sim`, Icarus Verilog) và mục 8 (`make test-c`, GCC 13 trên host) đã được chạy thật. Bản gốc lỗi 4 assertion RTL và 1 unit test C; sau khi sửa, cả hai đạt 100%. Mục 1–5 là kiểm tra tĩnh bằng script PowerShell (so khớp mẫu), không thay thế công cụ MISRA/lint chuyên dụng. Mục 7 (`make build-arm`) cũng đã chạy đạt. Chỉ còn mục 9 (HIL với cảm biến SM-5800 thật) chờ thực hiện. Script `verify_project.ps1` đã được sửa để chạy được cả trên Linux/macOS (`pwsh`).
 
 ---
 
@@ -77,7 +79,7 @@
 | `Angular Rate X` | $2^{-20} \times 600\ \text{rad/s/LSB}$ | `+1748 LSB` | `+1.00021 rad/s` (`57.31 °/s`) | `1.000 rad/s` (sai số lượng tử < 0.03%) | **PASS** |
 | `Linear Accel Z` | $2^{-14} \times 600 \times 0.3048\ \text{m/s}^2\text{/LSB}$ | `+879 LSB` | `+9.81149 m/s²` | `1.000 g = 9.80665 m/s²` (lệch 0.05%) | **PASS** |
 | `Delta Angle X` (100 Hz) | $2^{-33}\ \text{rad/LSB}$ | `+8589935 LSB` | `+0.00100000 rad` | `1.000 mrad` trong `0.01 s` (`0.1 rad/s`) | **PASS** |
-| `Delta Velocity Z` (100 Hz) | $2^{-27} \times 0.3048\ \text{m/s/LSB}$ | `+4322274 LSB` | `+0.098156 m/s` | `1 g × 0.01 s = 0.09807 m/s` | **PASS** |
+| `Delta Velocity Z` (100 Hz) | $2^{-27} \times 0.3048\ \text{m/s/LSB}$ | `+43183277 LSB` | `+0.0980665 m/s` | `1 g × 0.01 s = 0.09807 m/s` | **PASS** (đã sửa: vector cũ `+4322274 LSB` thực tế chỉ cho `0.0098156 m/s`, sai 10 lần — phát hiện khi chạy `make test-c`) |
 | `Accel Temp` (`SW1[15:8]`) | `1 °C/LSB` (bù 2 8-bit) | `0x19` (`+25`), `0xF6` (`-10`) | `+25 °C`, `-10 °C` | Khớp chính xác | **PASS** |
 
 ---

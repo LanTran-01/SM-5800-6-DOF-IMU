@@ -25,10 +25,32 @@ module sm5800_sensor_model (
     reg [15:0] tx_crc;
     integer    tx_ones_cnt;
 
+    // Idle-line behaviour between transmit tasks.
+    //   bit_driven_r : set by send_raw_bit when a task drove the current bit slot
+    //   hold_low_r   : 1 = leave the line where the last task put it (legacy /
+    //                  fault-injection "stuck-low" mode), 0 = return to mark idle
+    reg        bit_driven_r;
+    reg        hold_low_r;
+
     initial begin
-        ser_data_o  = 1'b1; // Idle mark
-        tx_crc      = 16'hFFFF;
-        tx_ones_cnt = 0;
+        ser_data_o   = 1'b1; // Idle mark
+        tx_crc       = 16'hFFFF;
+        tx_ones_cnt  = 0;
+        bit_driven_r = 1'b0;
+        hold_low_r   = 1'b0;
+    end
+
+    //--------------------------------------------------------------------------
+    // Mark idle: like a real Z8530 SCC, the line returns to '1' in any bit slot
+    // that no transmit task drove (checked 1 ns after send_raw_bit's 15 ns
+    // clock-to-out, so back-to-back task calls / shared flags are unaffected).
+    //--------------------------------------------------------------------------
+    always @(negedge rcv_clk_i) begin
+        #16;
+        if (!bit_driven_r && !hold_low_r) begin
+            ser_data_o = 1'b1;
+        end
+        bit_driven_r = 1'b0;
     end
 
     //--------------------------------------------------------------------------
@@ -39,7 +61,8 @@ module sm5800_sensor_model (
         begin
             @(negedge rcv_clk_i);
             #15; // Simulate realistic RS-422 + SCC clock-to-out delay (15 ns)
-            ser_data_o = bit_val;
+            ser_data_o   = bit_val;
+            bit_driven_r = 1'b1;
         end
     endtask
 
@@ -256,6 +279,37 @@ module sm5800_sensor_model (
             for (k = 0; k < 8; k = k + 1) begin
                 send_raw_bit(1'b1);
             end
+        end
+    endtask
+
+    //--------------------------------------------------------------------------
+    // Task (fault injection): drive N raw '0' bits (no stuffing / CRC), e.g. a
+    // stuck-low line or noise burst between frames. Creates a runt "frame".
+    //--------------------------------------------------------------------------
+    task send_raw_zeros;
+        input integer num_bits;
+        integer k;
+        begin
+            for (k = 0; k < num_bits; k = k + 1) begin
+                send_raw_bit(1'b0);
+            end
+        end
+    endtask
+
+    //--------------------------------------------------------------------------
+    // Task (fault injection): flag + N stuffed bytes + flag, no FCS (runt frame)
+    //--------------------------------------------------------------------------
+    task send_runt_frame;
+        input integer num_bytes;
+        integer k;
+        begin
+            send_flag();
+            tx_crc      = 16'hFFFF;
+            tx_ones_cnt = 0;
+            for (k = 0; k < num_bytes; k = k + 1) begin
+                send_stuffed_byte(8'h0A + k[7:0], 1'b1);
+            end
+            send_flag();
         end
     endtask
 
