@@ -88,13 +88,16 @@ check-guards:
 	$(call guard_must_fail,$(GUARD_P)C_S_AXI_ADDR_WIDTH=6,AXI_ADDR_LT_8)
 	@echo "Parameter guards: ALL PASSED"
 
-# Gate 3: Host C Unit Tests ([TC-DRV-01]-[TC-DRV-17]) with Mock HAL
+# Gate 3: Host C Unit Tests ([TC-DRV-01]-[TC-DRV-17], [TC-APP-01]-[TC-APP-02]) with Mock HAL
 test-c: $(BUILD_DIR)
 	$(HOST_CC) $(STRICT_CFLAGS) -c driver/sm5800_drv.c -o $(BUILD_DIR)/sm5800_drv.o
 	$(HOST_CC) $(TEST_CFLAGS) -c tests/mock_sm5800_hal.c -o $(BUILD_DIR)/mock_sm5800_hal.o
 	$(HOST_CC) $(TEST_CFLAGS) -c tests/test_sm5800_drv.c -o $(BUILD_DIR)/test_sm5800_drv.o
 	$(HOST_CC) $(BUILD_DIR)/sm5800_drv.o $(BUILD_DIR)/mock_sm5800_hal.o $(BUILD_DIR)/test_sm5800_drv.o -o $(BUILD_DIR)/test_sm5800_drv
 	./$(BUILD_DIR)/test_sm5800_drv
+	$(HOST_CC) $(TEST_CFLAGS) -Dmain=app_example_main -c tests/test_ps_example.c -o $(BUILD_DIR)/test_ps_example.o
+	$(HOST_CC) $(BUILD_DIR)/sm5800_drv.o $(BUILD_DIR)/mock_sm5800_hal.o $(BUILD_DIR)/test_ps_example.o -o $(BUILD_DIR)/test_ps_example
+	./$(BUILD_DIR)/test_ps_example
 
 # Gate 4: Cross-compile ARM Cortex-A9 PS Driver + emit .su stack usage + check ISR asm
 build-arm: $(BUILD_DIR)

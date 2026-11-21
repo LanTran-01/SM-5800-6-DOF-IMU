@@ -37,7 +37,10 @@
 #define TEST_DVEL_1G_MAX_M_S    (0.0986f)
 #define TEST_TEMP_EXPECTED_C    (25)
 #define TEST_VER_EXPECTED       (3U)
-#define MAX_VALID_RATE_DEG_S    (2000.0f)
+/* Rate plausibility: 16-bit full scale = 2^15 * 2^-20 * 600 = 18.75 rad/s
+ * (1074 deg/s). A reading at or beyond 18.5 rad/s is treated as sensor
+ * saturation. Replace with the SM-5800 rated range from the datasheet. */
+#define APP_RATE_LIMIT_RAD_S    (18.5f)
 
 /* Consecutive RESET_L recovery attempts allowed for a silent sensor */
 #define APP_MAX_LINK_RECOVERY   (3U)
@@ -92,6 +95,13 @@ static sm5800_msg2_eng_t g_last_eng =
 static float g_last_rate_x_deg_s = 0.0f;
 
 /**
+ * @brief   Msg 02 samples discarded by the rate plausibility check.
+ * @req     LLR-SM5800-APP-005
+ * @design  SDD-SM5800-4.4
+ */
+static uint32_t g_rate_reject_count = 0U;
+
+/**
  * @brief   Consecutive link-timeout recoveries since the last good sample.
  * @req     LLR-SM5800-APP-008
  * @design  SDD-SM5800-4.7
@@ -106,6 +116,7 @@ static sm5800_status_t handle_msg2_and_faults(
     sm5800_msg2_eng_t const * p_eng);
 static sm5800_status_t run_commanded_bit_cycle(void);
 static sm5800_status_t handle_link_faults(void);
+static bool is_rate_plausible(sm5800_msg2_eng_t const * p_eng);
 
 /**
  * @brief       PS GIC Interrupt Service Routine bound to PL irq_o (100 Hz).
@@ -189,6 +200,10 @@ int main(void)
                 {
                     sample_count++;
                     g_link_recovery_count = 0U;
+                }
+                else if (SM5800_ERR_NO_SAMPLE == status)
+                {
+                    /* Implausible sample discarded; keep acquiring */
                 }
                 else
                 {
@@ -373,13 +388,11 @@ static sm5800_status_t handle_msg2_and_faults(
 {
     sm5800_status_t result = SM5800_OK;
 
-    g_last_eng = *p_eng;
-    g_last_rate_x_deg_s = sm5800_rad_s_to_deg_s(p_eng->rate_x_rad_s);
-
-    if ((g_last_rate_x_deg_s < -MAX_VALID_RATE_DEG_S)
-        || (g_last_rate_x_deg_s > MAX_VALID_RATE_DEG_S))
+    if (!is_rate_plausible(p_eng))
     {
-        result = SM5800_ERR_PARAM;
+        /* Saturated / implausible gyro reading: discard, keep last good */
+        g_rate_reject_count++;
+        result = SM5800_ERR_NO_SAMPLE;
     }
     else if (p_eng->has_module_failed)
     {
@@ -394,6 +407,16 @@ static sm5800_status_t handle_msg2_and_faults(
     else
     {
         /* Nominal 100 Hz sample ready for navigation / flight control */
+    }
+
+    if (SM5800_ERR_NO_SAMPLE != result)
+    {
+        g_last_eng = *p_eng;
+        g_last_rate_x_deg_s = sm5800_rad_s_to_deg_s(p_eng->rate_x_rad_s);
+    }
+    else
+    {
+        /* Rejected sample never overwrites the last good telemetry */
     }
 
     return result;
@@ -487,4 +510,40 @@ static sm5800_status_t handle_link_faults(void)
     }
 
     return result;
+}
+
+
+/**
+ * @brief       Check that all three gyro axes are inside the plausible range.
+ * @req         LLR-SM5800-APP-005
+ * @design      SDD-SM5800-4.4
+ * @param[in]   p_eng  Converted Msg 02 sample, guaranteed non-NULL.
+ * @return      true if |rate_x|, |rate_y| and |rate_z| < APP_RATE_LIMIT_RAD_S.
+ * @note        ISR-safe. No libm: explicit two-sided comparisons per axis.
+ */
+static bool is_rate_plausible(sm5800_msg2_eng_t const * p_eng)
+{
+    bool is_ok = true;
+
+    if ((p_eng->rate_x_rad_s <= -APP_RATE_LIMIT_RAD_S)
+        || (p_eng->rate_x_rad_s >= APP_RATE_LIMIT_RAD_S))
+    {
+        is_ok = false;
+    }
+    else if ((p_eng->rate_y_rad_s <= -APP_RATE_LIMIT_RAD_S)
+             || (p_eng->rate_y_rad_s >= APP_RATE_LIMIT_RAD_S))
+    {
+        is_ok = false;
+    }
+    else if ((p_eng->rate_z_rad_s <= -APP_RATE_LIMIT_RAD_S)
+             || (p_eng->rate_z_rad_s >= APP_RATE_LIMIT_RAD_S))
+    {
+        is_ok = false;
+    }
+    else
+    {
+        /* All three axes inside the plausible range */
+    }
+
+    return is_ok;
 }

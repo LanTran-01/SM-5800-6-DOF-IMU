@@ -158,7 +158,8 @@ Mọi trường bit được định nghĩa thuần bằng cặp `_MASK` / `_SHI
 ### 3.6 `SDD-SM5800-4.0` – `4.7` — Ứng dụng mẫu PS (`driver/sm5800_ps_example.c`)
 - `4.0`–`4.2`: Khởi tạo tĩnh handle, ánh xạ `sm5800_ps_gic_isr()` vào GIC, vòng lặp đọc có cận trên `APP_MAX_POLL_CYCLES`.
 - `4.3` (`init_imu_100hz`): Tạo PDI `is_msg2_only = true`, tính CRC-32 và gọi `sm5800_init()`.
-- `4.4` (`handle_msg2_and_faults`) & `4.6` (`run_commanded_bit_cycle`): Tự động ra lệnh `RESET_L > 1 ms` khi `has_module_failed == true`, hoặc chạy chu trình **Commanded BIT (`BIT_L`)** khi phát hiện cờ `bit_fault_mask != 0`.
+- `4.4` (`handle_msg2_and_faults`, `is_rate_plausible`): mẫu có tốc độ quay bão hòa (|ω| ≥ 18.5 rad/s ở bất kỳ trục nào; full-scale 16-bit = 18,75 rad/s) bị loại, đếm vào `g_rate_reject_count` và không ghi đè mẫu tốt gần nhất. Ngưỡng cần thay bằng dải đo định mức trong datasheet SM-5800.
+- `4.4` & `4.6` (`run_commanded_bit_cycle`): Tự động ra lệnh `RESET_L > 1 ms` khi `has_module_failed == true`, hoặc chạy chu trình **Commanded BIT (`BIT_L`)** khi phát hiện cờ `bit_fault_mask != 0`.
 - `4.5` (`verify_raw_to_eng_math`): Tự kiểm chứng toán học phép quy đổi `sm5800_raw_to_eng_msg2()` với vector `1 g` bằng ngưỡng khoảng (`9.75f .. 9.86f`), không so sánh bằng `==` trên `float`.
 - `4.7` (`handle_link_faults`) & `3.3.19` (`sm5800_take_irq_faults`): FPGA báo `LINK_TIMEOUT` khi cảm biến im lặng (kể cả ngay sau bật nguồn); ISR chốt cờ vào `isr_fault_flags`, vòng lặp chính lấy-và-xóa cờ trong vùng găng rồi phát xung `RESET_L` để khởi động lại cảm biến, tối đa 3 lần liên tiếp.
 
