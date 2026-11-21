@@ -19,6 +19,8 @@
 //               [T13] 100 Hz Msg ID 02-only mode (MSG2_ONLY_MODE) & Msg2 IRQ
 //               [T14] Runt frames / stuck-low line between frames (ISO 3309)
 //               [T15] Watchdog start-up silence, one-shot, re-arm, safe default
+//               [T16] PL-PS IRQ timing, RESET_BUSY, fault gating, LAST_SEQ,
+//                     watchdog re-arm after BIT, 1 us tick rounding
 //==============================================================================
 
 `timescale 1ns / 1ps
@@ -196,6 +198,80 @@ module tb_sm5800_imu_axi;
         .imu_bit_l_o    (),
         .imu_reset_l_o  ()
     );
+
+    //--------------------------------------------------------------------------
+    // [T16] Monitors for timing details that AXI reads cannot observe
+    //--------------------------------------------------------------------------
+    // (a) irq_o value in the first cycle BVALID is high (1 ns after the edge)
+    reg         bvalid_d1_r;
+    reg         irq_at_bvalid_r;
+    initial begin
+        bvalid_d1_r     = 1'b0;
+        irq_at_bvalid_r = 1'b1;
+    end
+    always @(posedge s_axi_aclk) begin
+        #1;
+        if (s_axi_bvalid && !bvalid_d1_r) begin
+            irq_at_bvalid_r = irq_o;
+        end
+        bvalid_d1_r = s_axi_bvalid;
+    end
+
+    // (b) RESET_BUSY must already be 1 in the cycle the pulse is requested
+    integer     rst_req_seen_cnt;
+    integer     rst_busy_gap_cnt;
+    initial begin
+        rst_req_seen_cnt = 0;
+        rst_busy_gap_cnt = 0;
+    end
+    always @(posedge s_axi_aclk) begin
+        if (u_dut.u_clk_ctrl.reset_pulse_req_i) begin
+            rst_req_seen_cnt = rst_req_seen_cnt + 1;
+            if (!u_dut.u_clk_ctrl.reset_busy_o) begin
+                rst_busy_gap_cnt = rst_busy_gap_cnt + 1;
+            end
+        end
+    end
+
+    // (f) Clock controller built for a fractional-MHz AXI clock (33.333 MHz):
+    //     its 1 us tick must be >= 1.000 us, i.e. 34 cycles (33 would be 0.99 us)
+    wire        frac_tick_w;
+    integer     frac_cyc_cnt;
+    integer     frac_tick_period;
+    sm5800_clk_ctrl #(
+        .C_CLK_FREQ_HZ    (33_333_333),
+        .C_SDLC_CLK_HZ    (1_000_000),
+        .C_RESET_PULSE_US (2000)
+    ) u_clk_frac (
+        .clk_i             (s_axi_aclk),
+        .rst_ni            (s_axi_aresetn),
+        .clk_en_i          (1'b1),
+        .sample_edge_i     (1'b0),
+        .bit_cmd_i         (1'b0),
+        .reset_pulse_req_i (1'b0),
+        .reset_hold_i      (1'b0),
+        .rx_bit_valid_o    (),
+        .rx_bit_o          (),
+        .tick_1us_o        (frac_tick_w),
+        .timestamp_us_o    (),
+        .reset_busy_o      (),
+        .imu_rcv_clk_o     (),
+        .imu_ser_data_i    (1'b1),
+        .imu_bit_l_o       (),
+        .imu_reset_l_o     ()
+    );
+    always @(posedge s_axi_aclk) begin
+        if (!s_axi_aresetn) begin
+            frac_cyc_cnt     = 0;
+            frac_tick_period = 0;
+        end else begin
+            frac_cyc_cnt = frac_cyc_cnt + 1;
+            if (frac_tick_w) begin
+                frac_tick_period = frac_cyc_cnt;
+                frac_cyc_cnt     = 0;
+            end
+        end
+    end
 
     // Track dedicated Msg 01 / Msg 02 strobe output pins
     always @(posedge s_axi_aclk) begin
@@ -870,6 +946,116 @@ module tb_sm5800_imu_axi;
         //      reset TIMEOUT_CFG must exceed the 10 ms Msg 02 period with margin
         check_eq({31'd0, (u_dut_dflt.u_axi4_lite_if.timeout_cfg_r >= 32'd12000)}, 32'd1,
                  "T15d default TIMEOUT_CFG >= 12 ms in 100 Hz mode");
+
+        //----------------------------------------------------------------------
+        // [T16] PL->PS IRQ timing, RESET_BUSY, fault gating, LAST_SEQ,
+        //       watchdog re-arm after Commanded BIT, 1 us tick rounding
+        //----------------------------------------------------------------------
+        $display("[T16] Testing PL-PS IRQ timing, fault gating & watchdog re-arm...");
+        axi_write(ADDR_TIMEOUT_CFG, 32'd30000,     4'hF, 2'd0);
+        axi_write(ADDR_CTRL,        32'h0000_0201, 4'hF, 2'd0); // CLK_EN + SOFT_RESET
+        axi_write(ADDR_INT_ENABLE,  32'h0000_007F, 4'hF, 2'd0);
+        axi_write(ADDR_INT_STATUS,  32'h0000_007F, 4'hF, 2'd0);
+
+        // 16a. IRQ must already be low in the cycle BVALID rises
+        //      (i) after a W1C clear of INT_STATUS, (ii) after INT_ENABLE = 0
+        u_sensor.send_msg1(
+            8'h0A,
+            16'h1616, 16'h1616, 16'h1616,
+            16'h1616, 16'h1616, 16'h1616,
+            16'h1900, 16'h0003,
+            1'b1, 1'b0, 1'b0
+        );
+        wait_rx_settle();
+        check_eq({31'd0, irq_o}, 32'd1, "T16a IRQ high before W1C");
+        axi_write(ADDR_INT_STATUS, 32'h0000_007F, 4'hF, 2'd0);
+        check_eq({31'd0, irq_at_bvalid_r}, 32'd0, "T16a IRQ low in same cycle as W1C BVALID");
+        u_sensor.send_msg1(
+            8'h0A,
+            16'h1616, 16'h1616, 16'h1616,
+            16'h1616, 16'h1616, 16'h1616,
+            16'h1901, 16'h0003,
+            1'b1, 1'b0, 1'b0
+        );
+        wait_rx_settle();
+        check_eq({31'd0, irq_o}, 32'd1, "T16a IRQ high before INT_ENABLE=0");
+        axi_write(ADDR_INT_ENABLE, 32'h0000_0000, 4'hF, 2'd0);
+        check_eq({31'd0, irq_at_bvalid_r}, 32'd0, "T16a IRQ low in same cycle as INT_ENABLE BVALID");
+        axi_write(ADDR_INT_STATUS, 32'h0000_007F, 4'hF, 2'd0);
+        axi_write(ADDR_INT_ENABLE, 32'h0000_007F, 4'hF, 2'd0);
+
+        // 16b. RESET_BUSY covered the request cycle of every RESET_L pulse (T10)
+        check_eq({31'd0, (rst_req_seen_cnt > 0)}, 32'd1, "T16b at least one RESET_L pulse observed");
+        check_eq(rst_busy_gap_cnt, 32'd0, "T16b RESET_BUSY=1 in the pulse-request cycle");
+
+        // 16c. MSG2_ONLY: a fault in an uncommitted Msg 01 must NOT raise IMU_FAULT
+        axi_write(ADDR_CTRL,       32'h0000_0801, 4'hF, 2'd0); // CLK_EN + MSG2_ONLY
+        axi_write(ADDR_INT_STATUS, 32'h0000_007F, 4'hF, 2'd0);
+        u_sensor.send_msg1(
+            8'h0A,
+            16'h0C0C, 16'h0C0C, 16'h0C0C,
+            16'h0C0C, 16'h0C0C, 16'h0C0C,
+            16'h1912, 16'h0003,            // SW1[4] Module Failed, cnt 2
+            1'b1, 1'b0, 1'b0
+        );
+        wait_rx_settle();
+        axi_read(ADDR_INT_STATUS, rd_val);
+        check_eq(rd_val & 32'h0000_0005, 32'h0000_0001, "T16c Msg1 fault in MSG2_ONLY: MSG1_READY only, no IMU_FAULT");
+        u_sensor.send_msg2(
+            8'h0A,
+            16'h0C0C, 16'h0C0C, 16'h0C0C,
+            16'h0C0C, 16'h0C0C, 16'h0C0C,
+            16'h1913, 16'h0003,            // SW1[4] Module Failed, cnt 3
+            32'd1, 32'd2, 32'd3, 32'd4, 32'd5, 32'd6,
+            1'b1, 1'b0, 1'b0
+        );
+        wait_rx_settle();
+        axi_read(ADDR_INT_STATUS, rd_val);
+        check_eq(rd_val & 32'h0000_0004, 32'h0000_0004, "T16c Msg2 fault in MSG2_ONLY raises IMU_FAULT");
+        axi_write(ADDR_INT_STATUS, 32'h0000_007F, 4'hF, 2'd0);
+
+        // 16d. MSG2_ONLY: LAST_SEQ follows every valid frame, not only Msg 02
+        u_sensor.send_msg1(
+            8'h0A,
+            16'h0D0D, 16'h0D0D, 16'h0D0D,
+            16'h0D0D, 16'h0D0D, 16'h0D0D,
+            16'h1904, 16'h0003,            // cnt 4, no fault
+            1'b1, 1'b0, 1'b0
+        );
+        wait_rx_settle();
+        axi_read(ADDR_STATUS, rd_val);
+        check_eq((rd_val >> 16) & 32'h0000_000F, 32'd4, "T16d STATUS.LAST_SEQ == 4 after Msg1 in MSG2_ONLY");
+        axi_read(ADDR_SEQ_ERR_CNT, rd_val);
+        check_eq(rd_val, 32'd0, "T16d no SEQ_GAP across Msg1/Msg2 in MSG2_ONLY");
+
+        // 16e. Watchdog expires silently during Commanded BIT, then MUST re-arm
+        //      on BIT_L release and report a sensor that stays silent
+        axi_write(ADDR_CTRL,        32'h0000_0001, 4'hF, 2'd0); // normal mode
+        axi_write(ADDR_TIMEOUT_CFG, 32'd150,       4'hF, 2'd0); // 150 us
+        u_sensor.send_msg1(
+            8'h0A,
+            16'h0E0E, 16'h0E0E, 16'h0E0E,
+            16'h0E0E, 16'h0E0E, 16'h0E0E,
+            16'h1905, 16'h0003,
+            1'b1, 1'b0, 1'b0
+        );
+        wait_rx_settle();
+        axi_write(ADDR_INT_STATUS, 32'h0000_007F, 4'hF, 2'd0);
+        axi_write(ADDR_CTRL,       32'h0000_0005, 4'hF, 2'd0); // CMD_BIT_EN = 1
+        u_sensor.send_idle_flags(25);                           // 200 us > 150 us
+        wait_rx_settle();
+        axi_read(ADDR_INT_STATUS, rd_val);
+        check_eq(rd_val & 32'h0000_0020, 32'h0000_0000, "T16e no LINK_TIMEOUT while Commanded BIT active");
+        axi_write(ADDR_CTRL,       32'h0000_0001, 4'hF, 2'd0); // release BIT_L
+        u_sensor.send_idle_flags(25);                           // still silent
+        wait_rx_settle();
+        axi_read(ADDR_INT_STATUS, rd_val);
+        check_eq(rd_val & 32'h0000_0020, 32'h0000_0020, "T16e LINK_TIMEOUT re-armed after BIT_L release");
+        axi_write(ADDR_INT_STATUS,  32'h0000_007F, 4'hF, 2'd0);
+        axi_write(ADDR_TIMEOUT_CFG, 32'd30000,     4'hF, 2'd0);
+
+        // 16f. 33.333 MHz clock controller: 1 us tick = 34 cycles (>= 1.000 us)
+        check_eq(frac_tick_period, 32'd34, "T16f 1 us tick rounds up on 33.333 MHz clock");
 
         //----------------------------------------------------------------------
         // Final Summary

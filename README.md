@@ -20,9 +20,9 @@ IMU/
 │   ├── sm5800_msg_parser.v          # Phân biệt msg1_valid_o/msg2_valid_o, chế độ 100Hz MSG2_ONLY, watchdog
 │   ├── sm5800_axi4_lite_if.v        # Slave AMBA AXI4-Lite, thanh ghi 0x00-0x6C, SNAP_LOCK, ngắt W1C
 │   └── sm5800_imu_axi_top.v         # Top-level IP Core (Vivado IP Packager ready)
-├── tb/                              # Mô phỏng RTL (15 kịch bản tự kiểm tra [T1]-[T15])
+├── tb/                              # Mô phỏng RTL (16 kịch bản tự kiểm tra [T1]-[T16])
 │   ├── sm5800_sensor_model.v        # Mô hình cảm biến SM-5800 (Z8530 SCC bit-stuffing + CRC + tiêm lỗi)
-│   └── tb_sm5800_imu_axi.v          # Testbench tự kiểm tra toàn diện (gồm [T13] chế độ 100 Hz, [T14]-[T15])
+│   └── tb_sm5800_imu_axi.v          # Testbench tự kiểm tra toàn diện (gồm [T13] chế độ 100 Hz, [T14]-[T16])
 ├── driver/                          # Driver C99 lớp PS (MISRA C:2012 + BARR-C:2018 + DO-178A/B/C)
 │   ├── sm5800_regs.h                # Địa chỉ thanh ghi, _MASK, _SHIFT
 │   ├── sm5800_hal.h / .c            # Lớp HAL ARM Cortex-A9 (MMIO, DMB/DSB, CPSR critical section)
@@ -49,7 +49,7 @@ IMU/
    ```powershell
    powershell -ExecutionPolicy Bypass -File scripts/verify_project.ps1
    ```
-2. **Mô phỏng RTL (`[T1]`–`[T15]`) bằng Icarus Verilog hoặc Vivado `xsim`:**
+2. **Mô phỏng RTL (`[T1]`–`[T16]`) bằng Icarus Verilog hoặc Vivado `xsim`:**
    ```bash
    make sim        # Icarus Verilog
    make xsim       # Xilinx Vivado

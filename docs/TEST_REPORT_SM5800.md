@@ -19,7 +19,7 @@
 | 3. Kiểm tra tĩnh C Rules (MISRA C:2012 + BARR-C + DO-178C) | Automated Static Audit | 6 tệp | 6 | 0 | 0 | **PASS** |
 | 4. Kiểm chứng hệ số quy đổi vật lý 100 Hz (`sm5800_raw_to_eng_msg2`) | Analytical / Vector Check | 5 | 5 | 0 | 0 | **PASS** (vector `Delta Velocity Z` đã được sửa — bản gốc ghi PASS nhưng sai 10 lần) |
 | 5. Kiểm tra truy vết hai chiều (`HLR ↔ LLR ↔ SDD ↔ Code`) | Automated Tag Audit | 66 LLR (12 RTL + 54 C) | 66 | 0 | 0 | **PASS** |
-| 6. Mô phỏng RTL Testbench (`tb/tb_sm5800_imu_axi.v`, `[T1]`–`[T15]`) | Icarus Verilog `iverilog -g2001` | 15 | 15 | 0 | 0 | **PASS** (sau khi sửa lỗi khung cụt/runt frame; bản gốc: 4 lỗi ở T3/T4/T7) |
+| 6. Mô phỏng RTL Testbench (`tb/tb_sm5800_imu_axi.v`, `[T1]`–`[T16]`) | Icarus Verilog `iverilog -g2001` | 16 (255 assertion) | 16 | 0 | 0 | **PASS** (`[T16]` bảo vệ 6 thay đổi của commit `52031fa`: đảo ngược bất kỳ thay đổi nào đều làm `[T16]` FAIL; sau khi sửa lỗi khung cụt/runt frame; bản gốc: 4 lỗi ở T3/T4/T7) |
 | 7. Biên dịch chéo ARM GCC §12 & phân tích WCSU (`.su`) | `arm-none-eabi-gcc 13.2.1`, `-mcpu=cortex-a9` | 3 tệp `.c` | 3 | 0 | 0 | **PASS** (0 warning; stack lớn nhất 128 B ≤ 256 B; ISR `sm5800_irq_isr`: 0 lệnh VFP/NEON, 0 vòng lặp, `dsb` sau W1C, `dmb` trước khi thoát) |
 | 8. Unit Test C (`TC-DRV-01`–`TC-DRV-17`) | Host GCC 13 + Mock HAL | 17 (92 assertion) | 17 | 0 | 0 | **PASS** trên host (bản gốc: `TC-DRV-08` lỗi do vector sai 10 lần; commit `52031fa`: `TC-DRV-17` lỗi do test không đọc mẫu Msg 02 trước kịch bản timeout — đã sửa). Độ phủ MC/DC: chưa đo |
 | 9. Kiểm thử phần cứng HIL với cảm biến SM-5800 vật lý | Zynq PS/PL + SM-5800 | 4 | 0 | 0 | 4 | **PENDING_TARGET_EXEC** |
@@ -55,7 +55,7 @@
 | `rtl/sm5800_axi4_lite_if.v` | Đạt | `0` | Đạt | `75/75` (`u_axi4_lite_if`) | **PASS** |
 | `rtl/sm5800_imu_axi_top.v` | Đạt | `0` | Đạt | `28/28` (`u_dut`) | **PASS** |
 | `tb/sm5800_sensor_model.v` | Đạt | `0` | Đạt (25/25, 12 tasks) | `4/4` (`u_sensor`) | **PASS** |
-| `tb/tb_sm5800_imu_axi.v` | Đạt | `0` | Đạt (15 kịch bản `[T1]`–`[T15]`) | Đạt | **PASS** |
+| `tb/tb_sm5800_imu_axi.v` | Đạt | `0` | Đạt (16 kịch bản `[T1]`–`[T16]`) | Đạt | **PASS** |
 
 ### 2.3 Kiểm tra tĩnh quy chuẩn C Rules (`MISRA C:2012 + BARR-C:2018 + DO-178C`)
 
@@ -113,6 +113,7 @@ iverilog -g2001 -Wall -o sim_sm5800.vvp \
 | `[T13]` | `RTL-007`, `008`, `012` | Chế độ **100 Hz `MSG2_ONLY_MODE = 1`** & ngắt chỉ trên Msg 02 | Msg 01 không gây `irq_o`, không ghi đè Msg 02; Msg 02 cập nhật đủ 14 trường & dựng `irq_o` | **PASS** |
 | `[T14]` | `RTL-009` | Khung cụt / nhiễu kẹt mức thấp giữa các cờ (`< 32 bit`, ISO 3309) | Bỏ qua im lặng khung `< 32 bit`, bắt lỗi khung `≥ 32 bit`, không lệch counter | **PASS** |
 | `[T15]` | `RTL-009` | Watchdog khi cảm biến im lặng từ lúc khởi động, one-shot IRQ, tự re-arm và mặc định an toàn 100 Hz | Báo `LINK_TIMEOUT` một lần, tự kích hoạt lại sau khung hợp lệ, `TIMEOUT_CFG >= 12 ms` | **PASS** |
+| `[T16]` | `RTL-001`, `002`, `009`, `012` | PL→PS: `irq_o` tắt cùng chu kỳ `BVALID` khi W1C `INT_STATUS` / ghi `INT_ENABLE = 0`; `RESET_BUSY = 1` ngay chu kỳ yêu cầu xung; `MSG2_ONLY`: lỗi BIT trong Msg 01 (không commit) không bật `IMU_FAULT`, Msg 02 thì bật; `LAST_SEQ` theo mọi khung hợp lệ; watchdog hết hạn im lặng khi đang Commanded BIT rồi tự kích hoạt lại khi nhả `BIT_L`; tick 1 µs làm tròn lên (34 chu kỳ ở 33,333 MHz) | 0 lỗi; mỗi thay đổi của `52031fa` khi bị đảo ngược đều bị một kiểm tra `[T16]` bắt | **PASS** |
 
 ### 3.2 Bộ kiểm thử Đơn vị & Phủ cấu trúc MC/DC cho Driver C (`driver/`)
 
@@ -161,6 +162,6 @@ arm-none-eabi-gcc -std=c99 -pedantic-errors -O1 -fno-inline \
 
 | Vai trò | Họ và tên | Hạng mục duyệt | Kết luận (`Approve / Rework`) | Ngày |
 |---|---|---|---|---|
-| FPGA Lead | | RTL Verilog-2001, STA, kết quả `[T1]`–`[T15]` | | |
+| FPGA Lead | | RTL Verilog-2001, STA, kết quả `[T1]`–`[T16]` | | |
 | Embedded SW Lead | | C Rules (MISRA/BARR-C/DO-178C), `DEVIATION_LOG.md`, `.su` WCSU | | |
 | Verification / QA Engineer | | Truy vết `HLR↔LLR↔SDD↔Code`, Unit Test MC/DC & HIL | | |

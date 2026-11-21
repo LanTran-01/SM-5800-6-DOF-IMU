@@ -146,8 +146,8 @@ Mọi trường bit được định nghĩa thuần bằng cặp `_MASK` / `_SHI
   - Hệ số quy đổi chuẩn từ SM-5800 Sec. 5.2.1 & 5.2.2 (`1 ft = 0.3048 m` chính xác):
     - `rate_*_rad_s` = `lsb * 5.722045898e-4f` ($2^{-20} \times 600\ \text{rad/s}$)
     - `accel_*_m_s2` = `lsb * 0.011162109375f` ($2^{-14} \times 600 \times 0.3048\ \text{m/s}^2$)
-    - `delta_ang_*_rad` = `lsb * 1.164153218e-10f` ($2^{-33}\ \text{rad}$)
-    - `delta_vel_*_m_s` = `lsb * 2.270936966e-9f` ($2^{-27} \times 0.3048\ \text{m/s}$)
+    - `delta_ang_*_rad` = `(float)((double)lsb * 1.1641532182693481e-10)` ($2^{-33}\ \text{rad}$, nhân bằng `double` rồi làm tròn 1 lần sang `float`)
+    - `delta_vel_*_m_s` = `(float)((double)lsb * 2.2709369659423828e-9)` ($2^{-27} \times 0.3048\ \text{m/s}$, như trên)
 
 ### 3.5 Phân tích đồ thị gọi hàm (Call Graph) & Ngân sách Ngăn xếp (WCSU — DO-178C §6.3.4f)
 - **Không đệ quy, không con trỏ hàm động:** Toàn bộ đồ thị gọi hàm tĩnh, xác định 100% tại thời điểm biên dịch.
@@ -172,7 +172,7 @@ Mọi trường bit được định nghĩa thuần bằng cặp `_MASK` / `_SHI
 | `HLR-SM5800-03` | `LLR-SM5800-RTL-002`, `003` | `SDD-SM5800-1.1` | `rtl/sm5800_clk_ctrl.v` | `[T9]`, `[T10]` |
 | `HLR-SM5800-01` | `LLR-SM5800-RTL-004` | `SDD-SM5800-1.2` | `rtl/sm5800_crc16_ccitt.v` | Bit-exact PS, `[T3]`, `[T4]`, `[T7]` |
 | `HLR-SM5800-01` | `LLR-SM5800-RTL-005` | `SDD-SM5800-1.3` | `rtl/sm5800_sdlc_rx.v` | Bit-exact PS, `[T2]`–`[T4]`, `[T7]` |
-| `HLR-SM5800-02` | `LLR-SM5800-RTL-006`–`009` | `SDD-SM5800-1.4` | `rtl/sm5800_msg_parser.v`, `rtl/sm5800_imu_axi_top.v` | `[T3]`–`[T8]`, `[T11]`–`[T15]` |
+| `HLR-SM5800-02` | `LLR-SM5800-RTL-006`–`009` | `SDD-SM5800-1.4` | `rtl/sm5800_msg_parser.v`, `rtl/sm5800_imu_axi_top.v` | `[T3]`–`[T8]`, `[T11]`–`[T16]` |
 | `HLR-SM5800-02`, `04` | `LLR-SM5800-RTL-010`–`012` | `SDD-SM5800-1.5` | `rtl/sm5800_axi4_lite_if.v` | `[T1]`, `[T3]`, `[T4]`, `[T6]`, `[T12]`, `[T13]` |
 | `HLR-SM5800-02` | `LLR-SM5800-REG-001` | `SDD-SM5800-2.1` | `driver/sm5800_regs.h` | Static Audit, `TC-DRV-01` |
 | `HLR-SM5800-05` | `LLR-SM5800-HAL-001`–`006` | `SDD-SM5800-2.2.1`–`2.2.6` | `driver/sm5800_hal.h`, `driver/sm5800_hal.c` | Static Audit, `DEV-001/002`, `TC-DRV-01` |

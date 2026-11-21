@@ -32,7 +32,7 @@ IP Core viết bằng **Verilog-2001 (IEEE 1364-2001)**, tuân thủ chuẩn **A
 | `rtl/sm5800_msg_parser.v` | Giải mã gói SM-5800 (Addr `0x0A`, Msg ID 1 = 20B / 600 Hz, Msg ID 2 = 44B / 100 Hz), phân biệt rõ 2 chân đầu ra `msg1_valid_o` và `msg2_valid_o`, hỗ trợ `msg2_only_mode_i` (100 Hz) & `msg1_only_mode_i` (600 Hz); giám sát bộ đếm 4-bit, lỗi BIT và watchdog mất dữ liệu. |
 | `rtl/sm5800_axi4_lite_if.v` | Giao diện Slave AMBA AXI4-Lite đầy đủ (nhận AW/W độc lập mọi thứ tự, hỗ trợ `WSTRB`, khóa snapshot `DATA_LOCK` chống xé dữ liệu, ngắt W1C 7 nguồn gồm `MSG1_READY` / `MSG2_READY` riêng biệt, điều khiển `RESET_L` / `BIT_L` từ PS). |
 | `tb/sm5800_sensor_model.v` | Mô hình mô phỏng cảm biến SM-5800 (bit-stuffing, CRC-16-CCITT chuẩn Z8530, Shared Flag, tiêm lỗi). |
-| `tb/tb_sm5800_imu_axi.v` | Testbench tự kiểm tra toàn diện 15 kịch bản (`[T1]`–`[T15]`, gồm kiểm tra tách chân `msg1_valid_o`/`msg2_valid_o`, chế độ `MSG1_ONLY_MODE`, chế độ 100 Hz `MSG2_ONLY_MODE`, runt frame và watchdog). |
+| `tb/tb_sm5800_imu_axi.v` | Testbench tự kiểm tra toàn diện 16 kịch bản (`[T1]`–`[T16]`, gồm kiểm tra tách chân `msg1_valid_o`/`msg2_valid_o`, chế độ `MSG1_ONLY_MODE`, chế độ 100 Hz `MSG2_ONLY_MODE`, runt frame và watchdog). |
 | `driver/sm5800_regs.h` | Định nghĩa địa chỉ thanh ghi (gồm Motion Control + Spatial Data `0x40`–`0x54`), `_MASK` và `_SHIFT`. |
 | `driver/sm5800_hal.h` / `.c` | Lớp HAL truy cập MMIO AXI4-Lite, barrier `DMB`/`DSB` và vùng găng cho ARM Cortex-A9 PS. |
 | `driver/sm5800_drv.h` / `.c` | Driver C lớp PS tuân thủ MISRA C:2012 + BARR-C:2018 + DO-178A/B/C: ngắt 100 Hz bản tin `02`, hàm quy đổi 1 lệnh gọi `sm5800_read_msg2_eng()` / `sm5800_raw_to_eng_msg2()` ra SI dễ kiểm chứng, và điều khiển Reset/BIT từ PS → FPGA → IMU. |
@@ -40,7 +40,7 @@ IP Core viết bằng **Verilog-2001 (IEEE 1364-2001)**, tuân thủ chuẩn **A
 | `driver/DEVIATION_LOG.md` | Nhật ký ngoại lệ chuẩn *MISRA Compliance:2020* và cờ biên dịch DO-178C. |
 | `docs/LLR_SM5800.md` | Đặc tả yêu cầu mức thấp (66 LLR cho RTL + HAL + Driver + App) truy vết 1-1 với `@req`. |
 | `docs/SDD_SM5800.md` | Tài liệu thiết kế chi tiết phần cứng/phần mềm (sơ đồ Mermaid, WCSU, SEU, PDI CRC-32, ma trận truy vết). |
-| `docs/TEST_REPORT_SM5800.md` | Báo cáo kiểm chứng & kiểm thử (SVR): kết quả static/bit-exact đã chạy, kế hoạch `[T1]`–`[T15]`, `TC-DRV-01`–`17`, HIL và bảng ký duyệt. |
+| `docs/TEST_REPORT_SM5800.md` | Báo cáo kiểm chứng & kiểm thử (SVR): kết quả static/bit-exact đã chạy, kế hoạch `[T1]`–`[T16]`, `TC-DRV-01`–`17`, HIL và bảng ký duyệt. |
 
 ---
 

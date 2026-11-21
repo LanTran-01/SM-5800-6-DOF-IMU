@@ -44,12 +44,12 @@ $(BUILD_DIR):
 verify-static:
 	$(PWSH) -NoProfile -ExecutionPolicy Bypass -File scripts/verify_project.ps1
 
-# Gate 2a: RTL simulation via Icarus Verilog ([T1]-[T15])
+# Gate 2a: RTL simulation via Icarus Verilog ([T1]-[T16])
 sim: $(BUILD_DIR)
 	$(IVERILOG) -g2001 -Wall -o $(BUILD_DIR)/sim_sm5800.vvp $(RTL_SRCS) $(TB_SRCS)
 	$(VVP) $(BUILD_DIR)/sim_sm5800.vvp
 
-# Gate 2b: RTL simulation via Xilinx Vivado xsim ([T1]-[T15])
+# Gate 2b: RTL simulation via Xilinx Vivado xsim ([T1]-[T16])
 xsim:
 	xvlog $(RTL_SRCS) $(TB_SRCS)
 	xelab -debug typical tb_sm5800_imu_axi -s sim_sm5800
@@ -81,6 +81,8 @@ check-guards:
 	$(call guard_must_pass,$(GUARD_P)C_DEFAULT_MSG2_ONLY=1)
 	$(call guard_must_fail,$(GUARD_P)C_DEFAULT_MSG2_ONLY=1 $(GUARD_P)C_DEFAULT_TIMEOUT_US=5000,TIMEOUT_US_BELOW_12000)
 	$(call guard_must_fail,$(GUARD_P)C_CLK_FREQ_HZ=10500000,RCV_CLK_OUTSIDE_2PCT)
+	$(call guard_must_pass,$(GUARD_P)C_CLK_FREQ_HZ=25000000)
+	$(call guard_must_fail,$(GUARD_P)C_CLK_FREQ_HZ=15000000,RCV_CLK_OUTSIDE_2PCT)
 	$(call guard_must_fail,$(GUARD_P)C_CLK_FREQ_HZ=1500000,CLK_DIVIDER_OUT_OF_16BIT)
 	$(call guard_must_fail,$(GUARD_P)C_RESET_PULSE_US=1000,RESET_PULSE_US_NOT_IN)
 	$(call guard_must_fail,$(GUARD_P)C_S_AXI_ADDR_WIDTH=6,AXI_ADDR_LT_8)
