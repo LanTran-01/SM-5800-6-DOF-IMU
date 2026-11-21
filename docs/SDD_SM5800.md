@@ -46,7 +46,7 @@ sequenceDiagram
     participant GIC as PS GIC / ISR
     participant PS as PS Main Task
 
-    Note over PL,PS: 1. Khởi tạo: sm5800_init() kiểm tra PDI CRC-32 + CORE_ID, bật MSG2_ONLY & INT_ENABLE=0x02
+    Note over PL,PS: 1. Khởi tạo: sm5800_init() kiểm tra PDI CRC-32 + CORE_ID, bật MSG2_ONLY & INT_ENABLE=0x26
     IMU->>PL: Msg ID 01 (600 Hz, 20B)
     PL->>PL: Parse & đếm msg1_rx_cnt, xuất msg1_valid_o (KHÔNG ghi đè thanh ghi, KHÔNG ngắt PS)
     IMU->>PL: Msg ID 02 (100 Hz, 44B: 16B MC + 24B Spatial + 2B CRC)
@@ -172,11 +172,11 @@ Mọi trường bit được định nghĩa thuần bằng cặp `_MASK` / `_SHI
 | `HLR-SM5800-03` | `LLR-SM5800-RTL-002`, `003` | `SDD-SM5800-1.1` | `rtl/sm5800_clk_ctrl.v` | `[T9]`, `[T10]` |
 | `HLR-SM5800-01` | `LLR-SM5800-RTL-004` | `SDD-SM5800-1.2` | `rtl/sm5800_crc16_ccitt.v` | Bit-exact PS, `[T3]`, `[T4]`, `[T7]` |
 | `HLR-SM5800-01` | `LLR-SM5800-RTL-005` | `SDD-SM5800-1.3` | `rtl/sm5800_sdlc_rx.v` | Bit-exact PS, `[T2]`–`[T4]`, `[T7]` |
-| `HLR-SM5800-02` | `LLR-SM5800-RTL-006`–`009` | `SDD-SM5800-1.4` | `rtl/sm5800_msg_parser.v`, `rtl/sm5800_imu_axi_top.v` | `[T3]`–`[T8]`, `[T11]`–`[T13]` |
+| `HLR-SM5800-02` | `LLR-SM5800-RTL-006`–`009` | `SDD-SM5800-1.4` | `rtl/sm5800_msg_parser.v`, `rtl/sm5800_imu_axi_top.v` | `[T3]`–`[T8]`, `[T11]`–`[T15]` |
 | `HLR-SM5800-02`, `04` | `LLR-SM5800-RTL-010`–`012` | `SDD-SM5800-1.5` | `rtl/sm5800_axi4_lite_if.v` | `[T1]`, `[T3]`, `[T4]`, `[T6]`, `[T12]`, `[T13]` |
 | `HLR-SM5800-02` | `LLR-SM5800-REG-001` | `SDD-SM5800-2.1` | `driver/sm5800_regs.h` | Static Audit, `TC-DRV-01` |
 | `HLR-SM5800-05` | `LLR-SM5800-HAL-001`–`006` | `SDD-SM5800-2.2.1`–`2.2.6` | `driver/sm5800_hal.h`, `driver/sm5800_hal.c` | Static Audit, `DEV-001/002`, `TC-DRV-01` |
 | `HLR-SM5800-04`, `05` | `LLR-SM5800-DRV-001`–`008` | `SDD-SM5800-3.0`–`3.2` | `driver/sm5800_drv.h` | Static Audit, `TC-DRV-02`–`08` |
-| `HLR-SM5800-02`–`05` | `LLR-SM5800-DRV-010`–`028` | `SDD-SM5800-3.3.1`–`3.3.19` | `driver/sm5800_drv.h`, `driver/sm5800_drv.c` | `TC-DRV-01`–`TC-DRV-15`, `TC-DRV-17` |
+| `HLR-SM5800-02`–`05` | `LLR-SM5800-DRV-010`–`028` | `SDD-SM5800-3.3.1`–`3.3.19` | `driver/sm5800_drv.h`, `driver/sm5800_drv.c` | `TC-DRV-01`–`TC-DRV-17` |
 | `HLR-SM5800-04`, `05` | `LLR-SM5800-DRV-030`–`041` | `SDD-SM5800-3.4.1`–`3.4.12` | `driver/sm5800_drv.c` | `TC-DRV-01`–`TC-DRV-15` |
-| `HLR-SM5800-03`, `04` | `LLR-SM5800-APP-001`–`008` | `SDD-SM5800-4.0`–`4.7` | `driver/sm5800_ps_example.c` | `TC-DRV-16`, HIL |
+| `HLR-SM5800-03`, `04` | `LLR-SM5800-APP-001`–`008` | `SDD-SM5800-4.0`–`4.7` | `driver/sm5800_ps_example.c` | `TC-DRV-16`, `TC-DRV-17`, HIL |

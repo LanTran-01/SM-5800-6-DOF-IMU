@@ -1,6 +1,6 @@
 /**
  * @file    test_sm5800_drv.c
- * @brief   Host C99 unit test suite covering TC-DRV-01 through TC-DRV-16.
+ * @brief   Host C99 unit test suite covering TC-DRV-01 through TC-DRV-17.
  */
 
 #include <stdbool.h>
@@ -87,17 +87,30 @@ static void test_pdi_and_init(void)
     uint32_t crc = 0U;
     sm5800_status_t st = SM5800_OK;
 
-    /* TC-DRV-01: NULL parameter checks on CRC */
+    /* TC-DRV-01: NULL parameter checks and IEEE 802.3 CRC-32 vector */
     st = sm5800_calc_cfg_crc32(NULL, &crc);
     check_cond(SM5800_ERR_PARAM == st, "TC-DRV-01: calc_crc NULL cfg");
     st = sm5800_calc_cfg_crc32(&cfg, NULL);
     check_cond(SM5800_ERR_PARAM == st, "TC-DRV-01: calc_crc NULL out");
+    st = sm5800_calc_cfg_crc32(&cfg, &crc);
+    check_cond((SM5800_OK == st) && (0x6C6D6CC7U == crc),
+               "TC-DRV-01: calc_crc matches IEEE 802.3 vector 0x6C6D6CC7");
 
     /* TC-DRV-02: PDI validation branches */
     mock_hal_reset();
+    check_cond(SM5800_ERR_PARAM == sm5800_init(NULL, &cfg),
+               "TC-DRV-02: init NULL drv");
+    check_cond(SM5800_ERR_PARAM == sm5800_init(&drv, NULL),
+               "TC-DRV-02: init NULL cfg");
     cfg.schema_version = 0x12345678U;
     check_cond(SM5800_ERR_PDI_SCHEMA == sm5800_init(&drv, &cfg),
                "TC-DRV-02: bad schema");
+
+    cfg = make_valid_cfg();
+    cfg.base_addr = (uintptr_t)0U;
+    (void)sm5800_calc_cfg_crc32(&cfg, &cfg.crc32);
+    check_cond(SM5800_ERR_PARAM == sm5800_init(&drv, &cfg),
+               "TC-DRV-02: zero base_addr");
 
     cfg = make_valid_cfg();
     cfg.base_addr = (uintptr_t)0x43C00002U;
@@ -141,6 +154,19 @@ static void test_pdi_and_init(void)
                       & SM5800_CTRL_MSG2_ONLY_MASK),
                "TC-DRV-03: CTRL.MSG2_ONLY_MODE set");
 
+    /* TC-DRV-03b: Safe re-init with alternate boolean flags (100% MC/DC) */
+    cfg.is_falling_edge = true;
+    cfg.is_raw_crc_mode = true;
+    cfg.is_msg2_only = false;
+    (void)sm5800_calc_cfg_crc32(&cfg, &cfg.crc32);
+    check_cond(SM5800_OK == sm5800_init(&drv, &cfg),
+               "TC-DRV-03: safe re-init with alternate flags");
+    check_cond((SM5800_CTRL_CLK_EN_MASK
+                | SM5800_CTRL_FALL_EDGE_MASK
+                | SM5800_CTRL_CRC_RAW_MASK)
+               == mock_hal_get_reg(SM5800_REG_CTRL),
+               "TC-DRV-03: CTRL reflects falling-edge & raw-CRC flags");
+
     /* TC-DRV-04: SEU bit-flip in state & clean deinit */
     drv.state = (sm5800_state_t)((uint32_t)SM5800_STATE_READY ^ 0x01U);
     check_cond(SM5800_ERR_STATE == sm5800_deinit(&drv),
@@ -165,8 +191,11 @@ static void test_isr_read_and_convert(void)
 
     /* TC-DRV-05 & TC-DRV-06: ISR safety, W1C, and pending flag */
     sm5800_irq_isr(NULL);
+    sm5800_irq_isr(&drv);
+    check_cond(!sm5800_is_msg2_pending(NULL),
+               "TC-DRV-05: NULL handle not pending");
     check_cond(!sm5800_is_msg2_pending(&drv),
-               "TC-DRV-05: not pending before IRQ");
+               "TC-DRV-05: not pending after spurious IRQ");
     check_cond(SM5800_ERR_NO_SAMPLE == sm5800_read_msg2_raw(&drv, &raw),
                "TC-DRV-07: ERR_NO_SAMPLE when idle");
 
@@ -188,8 +217,11 @@ static void test_isr_read_and_convert(void)
     mock_hal_set_reg(SM5800_REG_STATUS_WORD2, 0xF807U);
     mock_hal_set_reg(SM5800_REG_SP_TIMESTAMP, 123456U);
 
-    /* Fire 100 Hz Msg 02 interrupt */
-    mock_hal_set_reg(SM5800_REG_INT_STATUS, SM5800_INT_MSG2_RDY_MASK);
+    /* Fire 100 Hz Msg 02 interrupt with realistic FPGA INT_STATUS (0x43) */
+    mock_hal_set_reg(SM5800_REG_INT_STATUS,
+                     SM5800_INT_MSG1_RDY_MASK
+                     | SM5800_INT_MSG2_RDY_MASK
+                     | SM5800_INT_MC_ANY_MASK);
     sm5800_irq_isr(&drv);
     check_cond(0U == mock_hal_get_reg(SM5800_REG_INT_STATUS),
                "TC-DRV-05: ISR cleared INT_STATUS W1C");
@@ -213,6 +245,8 @@ static void test_isr_read_and_convert(void)
                "TC-DRV-08: 1748 LSB -> 1.0002 rad/s");
     check_cond(is_near_f(eng.accel_z_m_s2, 9.8115f, 0.01f),
                "TC-DRV-08: 879 LSB -> ~9.81 m/s^2 (1g)");
+    check_cond(is_near_f(eng.delta_ang_x_rad, -0.25f, 0.000001f),
+               "TC-DRV-08: INT32_MIN (-2^31) * 2^-33 -> -0.25 rad exact");
     check_cond(is_near_f(eng.delta_ang_y_rad, 0.0010f, 0.00001f),
                "TC-DRV-08: 8589935 LSB -> 0.001 rad");
     check_cond(is_near_f(eng.delta_vel_z_m_s, 0.0980665f, 0.00001f),
@@ -235,8 +269,12 @@ static void test_isr_read_and_convert(void)
                "TC-DRV-09: second read returns ERR_NO_SAMPLE");
 
     /* TC-DRV-15: rad/s to deg/s helper */
+    check_cond(is_near_f(sm5800_rad_s_to_deg_s(0.0f), 0.0f, 0.0001f),
+               "TC-DRV-15: 0 rad/s -> 0 deg/s");
     check_cond(is_near_f(sm5800_rad_s_to_deg_s(1.0f), 57.2958f, 0.01f),
                "TC-DRV-15: 1 rad/s -> 57.2958 deg/s");
+    check_cond(is_near_f(sm5800_rad_s_to_deg_s(-18.75f), -1074.2959f, 0.05f),
+               "TC-DRV-15: -18.75 rad/s -> -1074.30 deg/s");
 }
 
 
@@ -247,9 +285,24 @@ static void test_reset_bit_and_diag(void)
     sm5800_diag_t diag = { .msg1_rx_count = 0U };
 
     mock_hal_reset();
+    check_cond(!sm5800_is_reset_busy(NULL),
+               "TC-DRV-13: is_reset_busy(NULL) == false");
+    check_cond(!sm5800_is_reset_busy(&drv),
+               "TC-DRV-13: is_reset_busy(UNINIT) == false");
+    check_cond(!sm5800_is_cmd_bit_active(NULL),
+               "TC-DRV-13: is_cmd_bit_active(NULL) == false");
+    check_cond(!sm5800_is_cmd_bit_active(&drv),
+               "TC-DRV-13: is_cmd_bit_active(UNINIT) == false");
     (void)sm5800_init(&drv, &cfg);
 
     /* TC-DRV-10: Timed RESET_L pulse & bounded poll */
+    check_cond(SM5800_OK == sm5800_trigger_reset(&drv, 0U),
+               "TC-DRV-10: trigger_reset fire-and-return (poll_limit=0)");
+    mock_hal_set_rst_busy_polls(1U);
+    check_cond(sm5800_is_reset_busy(&drv),
+               "TC-DRV-13: is_reset_busy == true while pulse active");
+    check_cond(!sm5800_is_reset_busy(&drv),
+               "TC-DRV-13: is_reset_busy == false after pulse completes");
     mock_hal_set_rst_busy_polls(3U);
     check_cond(SM5800_OK == sm5800_trigger_reset(&drv, 10U),
                "TC-DRV-10: trigger_reset completes within poll limit");
@@ -305,6 +358,49 @@ static void test_reset_bit_and_diag(void)
 }
 
 
+static void test_app_recovery_flow(void)
+{
+    sm5800_drv_t drv = { .state = SM5800_STATE_UNINIT };
+    sm5800_config_t cfg = make_valid_cfg();
+    sm5800_msg2_eng_t eng = { .timestamp_us = 0U };
+
+    /* TC-DRV-16: End-to-end PS 100 Hz acquisition + BIT / Reset recovery */
+    mock_hal_reset();
+    check_cond(SM5800_OK == sm5800_init(&drv, &cfg),
+               "TC-DRV-16: init 100 Hz mode OK");
+
+    /* 1. Inject active Gyro BIT fault (SW2 bit 11) -> run Commanded BIT */
+    mock_hal_set_reg(SM5800_REG_LIN_ACC_Z, 879U);
+    mock_hal_set_reg(SM5800_REG_STATUS_WORD1, 0x1901U);
+    mock_hal_set_reg(SM5800_REG_STATUS_WORD2, 0x0803U);
+    mock_hal_set_reg(SM5800_REG_INT_STATUS, SM5800_INT_MSG2_RDY_MASK);
+    sm5800_irq_isr(&drv);
+    check_cond(SM5800_OK == sm5800_read_msg2_eng(&drv, &eng),
+               "TC-DRV-16: read sample with BIT fault OK");
+    check_cond((!eng.has_module_failed)
+               && (SM5800_FLT_GYRO_TST_MASK == eng.bit_fault_mask),
+               "TC-DRV-16: Gyro BIT fault decoded");
+    check_cond((SM5800_OK == sm5800_start_cmd_bit(&drv))
+               && sm5800_is_cmd_bit_active(&drv)
+               && (SM5800_OK == sm5800_stop_cmd_bit(&drv)),
+               "TC-DRV-16: Commanded BIT recovery cycle OK");
+
+    /* 2. Inject latched Module Failed (SW1 bit 4) -> trigger RESET_L pulse */
+    mock_hal_set_reg(SM5800_REG_STATUS_WORD1, 0x1912U);
+    mock_hal_set_reg(SM5800_REG_STATUS_WORD2, 0x0003U);
+    mock_hal_set_reg(SM5800_REG_INT_STATUS, SM5800_INT_MSG2_RDY_MASK);
+    sm5800_irq_isr(&drv);
+    check_cond(SM5800_OK == sm5800_read_msg2_eng(&drv, &eng),
+               "TC-DRV-16: read sample with Module Failed OK");
+    mock_hal_set_rst_busy_polls(2U);
+    check_cond(eng.has_module_failed
+               && (SM5800_OK == sm5800_trigger_reset(&drv, 10U)),
+               "TC-DRV-16: Module Failed triggers timed RESET_L OK");
+    check_cond(SM5800_OK == sm5800_deinit(&drv),
+               "TC-DRV-16: clean deinit OK");
+}
+
+
 static void test_fault_irq(void)
 {
     sm5800_drv_t drv = { .state = SM5800_STATE_UNINIT };
@@ -321,9 +417,17 @@ static void test_fault_irq(void)
     check_cond(SM5800_ERR_PARAM == sm5800_take_irq_faults(&drv, NULL),
                "TC-DRV-17: NULL output -> ERR_PARAM");
 
+    /* Nominal 100 Hz IRQ with MSG1_READY | MSG2_READY | MC_ANY_READY (0x43)
+     * must NOT pollute isr_fault_flags */
+    mock_hal_set_reg(SM5800_REG_INT_STATUS,
+                     SM5800_INT_MSG1_RDY_MASK
+                     | SM5800_INT_MSG2_RDY_MASK
+                     | SM5800_INT_MC_ANY_MASK);
+    sm5800_irq_isr(&drv);
     check_cond(SM5800_OK == sm5800_take_irq_faults(&drv, &faults),
-               "TC-DRV-17: take_irq_faults OK when idle");
-    check_cond(0U == faults, "TC-DRV-17: no faults after init");
+               "TC-DRV-17: take_irq_faults OK after nominal 0x43 IRQ");
+    check_cond(0U == faults,
+               "TC-DRV-17: non-fault bits (MSG1, MC_ANY) filtered out");
 
     /* Sensor goes silent: FPGA raises only LINK_TIMEOUT (no MSG2_READY) */
     mock_hal_set_reg(SM5800_REG_INT_STATUS, SM5800_INT_TIMEOUT_MASK);
@@ -356,6 +460,7 @@ int main(void)
     test_pdi_and_init();
     test_isr_read_and_convert();
     test_reset_bit_and_diag();
+    test_app_recovery_flow();
     test_fault_irq();
 
     (void)printf("==================================================\n");

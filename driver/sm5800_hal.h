@@ -8,6 +8,7 @@
 #ifndef SM5800_HAL_H
 #define SM5800_HAL_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /* Assertion hook: compiles to ((void)0) in flight/certification builds */
@@ -27,8 +28,12 @@ void sm5800_hal_assert_fail(void);
         {                               \
             sm5800_hal_assert_fail();   \
         }                               \
+        else                            \
+        {                               \
+            /* Contract satisfied */    \
+        }                               \
     }                                   \
-    while (0)
+    while (false)
 #else
 #define SM5800_ASSERT(expr) ((void)0)
 #endif /* SM5800_ENABLE_ASSERT */

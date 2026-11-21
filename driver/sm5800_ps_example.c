@@ -27,10 +27,17 @@
 #define TEST_DVEL_Z_LSB         (43183277)
 #define TEST_SW1_NOMINAL_25C    (0x1902U)
 #define TEST_SW2_VER_3          (0x0003U)
+#define TEST_RATE_1RAD_MIN      (0.995f)
+#define TEST_RATE_1RAD_MAX      (1.005f)
 #define TEST_ACCEL_1G_MIN_M_S2  (9.75f)
 #define TEST_ACCEL_1G_MAX_M_S2  (9.86f)
+#define TEST_DANG_1MRAD_MIN     (0.00099f)
+#define TEST_DANG_1MRAD_MAX     (0.00101f)
 #define TEST_DVEL_1G_MIN_M_S    (0.0975f)
 #define TEST_DVEL_1G_MAX_M_S    (0.0986f)
+#define TEST_TEMP_EXPECTED_C    (25)
+#define TEST_VER_EXPECTED       (3U)
+#define MAX_VALID_RATE_DEG_S    (2000.0f)
 
 /* Consecutive RESET_L recovery attempts allowed for a silent sensor */
 #define APP_MAX_LINK_RECOVERY   (3U)
@@ -153,8 +160,6 @@ int main(void)
                && (poll_cycles < APP_MAX_POLL_CYCLES)
                && is_running)
         {
-            bool is_ready = sm5800_is_msg2_pending(&g_imu_drv);
-
             poll_cycles++;
             status = handle_link_faults();
 
@@ -164,9 +169,9 @@ int main(void)
                 exit_code = 1;
                 is_running = false;
             }
-            else if (is_ready)
+            else if (sm5800_is_msg2_pending(&g_imu_drv))
             {
-                sm5800_msg2_eng_t eng_sample = { .timestamp_us = 0U };
+                sm5800_msg2_eng_t eng_sample = g_last_eng;
 
                 /* Single-call atomic read + conversion to verifiable SI */
                 status = sm5800_read_msg2_eng(&g_imu_drv, &eng_sample);
@@ -195,6 +200,15 @@ int main(void)
             {
                 /* Wait for next 100 Hz Message ID 02 interrupt from FPGA */
             }
+        }
+
+        if (sample_count < APP_TARGET_SAMPLES)
+        {
+            exit_code = 1;
+        }
+        else
+        {
+            /* Target sample count acquired within poll budget */
         }
 
         status = sm5800_deinit(&g_imu_drv);
@@ -304,19 +318,30 @@ static sm5800_status_t verify_raw_to_eng_math(void)
 
     if (SM5800_OK == result)
     {
-        if (test_eng.accel_z_m_s2 < TEST_ACCEL_1G_MIN_M_S2)
+        if ((test_eng.rate_x_rad_s < TEST_RATE_1RAD_MIN)
+            || (test_eng.rate_x_rad_s > TEST_RATE_1RAD_MAX))
         {
             result = SM5800_ERR_PARAM;
         }
-        else if (test_eng.accel_z_m_s2 > TEST_ACCEL_1G_MAX_M_S2)
+        else if ((test_eng.accel_z_m_s2 < TEST_ACCEL_1G_MIN_M_S2)
+                 || (test_eng.accel_z_m_s2 > TEST_ACCEL_1G_MAX_M_S2))
         {
             result = SM5800_ERR_PARAM;
         }
-        else if (test_eng.delta_vel_z_m_s < TEST_DVEL_1G_MIN_M_S)
+        else if ((test_eng.delta_ang_x_rad < TEST_DANG_1MRAD_MIN)
+                 || (test_eng.delta_ang_x_rad > TEST_DANG_1MRAD_MAX))
         {
             result = SM5800_ERR_PARAM;
         }
-        else if (test_eng.delta_vel_z_m_s > TEST_DVEL_1G_MAX_M_S)
+        else if ((test_eng.delta_vel_z_m_s < TEST_DVEL_1G_MIN_M_S)
+                 || (test_eng.delta_vel_z_m_s > TEST_DVEL_1G_MAX_M_S))
+        {
+            result = SM5800_ERR_PARAM;
+        }
+        else if ((TEST_TEMP_EXPECTED_C != test_eng.accel_temp_degc)
+                 || (0U != test_eng.bit_fault_mask)
+                 || (TEST_VER_EXPECTED != test_eng.sw_version)
+                 || test_eng.has_module_failed)
         {
             result = SM5800_ERR_PARAM;
         }
@@ -351,7 +376,12 @@ static sm5800_status_t handle_msg2_and_faults(
     g_last_eng = *p_eng;
     g_last_rate_x_deg_s = sm5800_rad_s_to_deg_s(p_eng->rate_x_rad_s);
 
-    if (p_eng->has_module_failed)
+    if ((g_last_rate_x_deg_s < -MAX_VALID_RATE_DEG_S)
+        || (g_last_rate_x_deg_s > MAX_VALID_RATE_DEG_S))
+    {
+        result = SM5800_ERR_PARAM;
+    }
+    else if (p_eng->has_module_failed)
     {
         /* Severe latched fault: command FPGA to pulse SM-5800 RESET_L > 1ms */
         result = sm5800_trigger_reset(&g_imu_drv, SM5800_RESET_POLL_MAX);
@@ -385,6 +415,7 @@ static sm5800_status_t run_commanded_bit_cycle(void)
     if (SM5800_OK == result)
     {
         uint32_t dwell_tick = 0U;
+        bool bit_held_ok = true;
 
         /* Bounded placeholder dwell; use PS TTC/GTimer for >= 200 ms hold */
         for (dwell_tick = 0U; dwell_tick < APP_CMD_BIT_DWELL_TICKS;
@@ -393,6 +424,7 @@ static sm5800_status_t run_commanded_bit_cycle(void)
             bool is_active = sm5800_is_cmd_bit_active(&g_imu_drv);
             if (!is_active)
             {
+                bit_held_ok = false;
                 break;
             }
             else
@@ -402,6 +434,14 @@ static sm5800_status_t run_commanded_bit_cycle(void)
         }
 
         result = sm5800_stop_cmd_bit(&g_imu_drv);
+        if ((SM5800_OK == result) && (!bit_held_ok))
+        {
+            result = SM5800_ERR_STATE;
+        }
+        else
+        {
+            /* BIT_L held for full dwell window and released cleanly */
+        }
     }
     else
     {

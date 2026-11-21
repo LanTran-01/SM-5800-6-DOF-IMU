@@ -256,6 +256,8 @@ module sm5800_axi4_lite_if #(
 
     wire [6:0]  hw_int_events_w;
     wire [6:0]  sw_w1c_mask_w;
+    wire [6:0]  int_status_next_w;
+    wire [6:0]  int_enable_next_w;
     wire        unused_prot_w;
 
     // Explicitly consume unused AXI protection bits to avoid linter warnings
@@ -286,6 +288,13 @@ module sm5800_axi4_lite_if #(
 
     assign sw_w1c_mask_w = (wr_fire_w && (wr_word_addr_w == P_REG_INT_STATUS) && wr_strb_w[0])
                            ? wr_data_w[6:0] : 7'b000_0000;
+
+    assign int_status_next_w = ctrl_soft_rst_r
+                               ? 7'b000_0000
+                               : ((int_status_r & ~sw_w1c_mask_w) | hw_int_events_w);
+    assign int_enable_next_w = (wr_fire_w && (wr_word_addr_w == P_REG_INT_ENABLE) && wr_strb_w[0])
+                               ? wr_data_w[6:0]
+                               : int_enable_r;
 
     //--------------------------------------------------------------------------
     // Selected Read Data (Live when unlocked, Shadowed when DATA_LOCK=1)
@@ -425,14 +434,10 @@ module sm5800_axi4_lite_if #(
             ctrl_soft_rst_r    <= 1'b0;
 
             // Lossless Interrupt Status: HW set takes priority over SW W1C clear
-            if (ctrl_soft_rst_r) begin
-                int_status_r <= 7'b000_0000;
-            end else begin
-                int_status_r <= (int_status_r & ~sw_w1c_mask_w) | hw_int_events_w;
-            end
+            int_status_r <= int_status_next_w;
 
-            // Registered glitch-free interrupt output
-            irq_r <= |(int_status_r & int_enable_r);
+            // Registered glitch-free interrupt output (deasserts same cycle as W1C BVALID)
+            irq_r <= |(int_status_next_w & int_enable_next_w);
 
             // AXI Register Writes
             if (wr_fire_w) begin

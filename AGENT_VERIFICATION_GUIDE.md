@@ -14,7 +14,7 @@ Dự án triển khai hệ thống đọc cảm biến **SM-5800 6-DOF Motion Se
 2. **Phân biệt bản tin & Chế độ 100 Hz (SM-5800 Sec. 5.1–5.2):**
    - `Module Addr = 0x0A`; **Msg ID 01** (600 Hz, 20 byte); **Msg ID 02** (**100 Hz**, 44 byte: 16B Motion Control + 24B Spatial Data + 2B CRC).
    - Khối `sm5800_msg_parser` và `sm5800_imu_axi_top` xuất **2 chân tách biệt** `msg1_valid_o` và `msg2_valid_o`.
-   - Khi `CTRL[11] MSG2_ONLY_MODE = 1` và `INT_ENABLE = 0x02 (MSG2_READY)`: FPGA chỉ commit toàn bộ 14 trường dữ liệu và dựng ngắt `irq_o` lên PS ở **100 Hz** (bản tin `01` không ghi đè dữ liệu `02` và không làm gián đoạn PS).
+   - Khi `CTRL[11] MSG2_ONLY_MODE = 1` và `INT_ENABLE = 0x26 (MSG2_READY | IMU_FAULT | LINK_TIMEOUT)`: FPGA chỉ commit toàn bộ 14 trường dữ liệu cho bản tin `02` ở **100 Hz** (bản tin `01` không ghi đè dữ liệu `02` và không làm gián đoạn PS), đồng thời báo ngắt ngay khi có lỗi BIT hoặc mất luồng dữ liệu.
 3. **Điều khiển Reset & BIT từ PS → FPGA → IMU (SM-5800 Sec. 4.3.2, 4.4, 6.3):**
    - `RESET_L` (Pin 18, open-collector): xung thấp phần cứng **> 1.0 ms** (mặc định `2.0 ms`), thả nổi `1` khi FPGA reset; có cả chế độ giữ/nhả thủ công (`sm5800_hold_reset` / `sm5800_release_reset`).
    - `BIT_L` (Pin 12, open-collector): điều khiển Commanded BIT từ PS (`sm5800_start_cmd_bit` / `sm5800_stop_cmd_bit`) khi phát hiện lỗi trong `Status Word 1/2`.
@@ -38,7 +38,7 @@ powershell -ExecutionPolicy Bypass -File scripts/verify_project.ps1
   - `Gate D`: 0 vi phạm C Rules trên toàn bộ `driver/*.h`, `driver/*.c` (dòng ≤ 80, ngoặc Allman, 0 `//`, 0 tab, 0 từ mơ hồ, ID ≤ 31, hàm ≤ 100 dòng, 0 `? :`, 0 từ khóa cấm).
   - `Gate E`: Khớp 100% địa chỉ thanh ghi `rtl/sm5800_axi4_lite_if.v ↔ driver/sm5800_regs.h` và khớp 100% truy vết `@req`/`@design` ↔ `docs/LLR_SM5800.md` / `docs/SDD_SM5800.md`.
 
-### Gate 2 — Mô phỏng RTL & Lint phần cứng (`[T1]`–`[T13]`)
+### Gate 2 — Mô phỏng RTL & Lint phần cứng (`[T1]`–`[T15]`)
 Chạy một trong các trình mô phỏng sau (ưu tiên tất cả các công cụ có sẵn trên máy):
 ```bash
 # Icarus Verilog
@@ -51,11 +51,11 @@ make xsim
 make lint-rtl
 ```
 - **Tiêu chí đạt:**
-  - `ALL TESTS PASSED! (... assertions passed, 0 errors)` trên toàn bộ 13 kịch bản `[T1]`–`[T13]`.
+  - `ALL TESTS PASSED! (... assertions passed, 0 errors)` trên toàn bộ 15 kịch bản `[T1]`–`[T15]`.
   - Xác nhận `[T10]` đo xung `RESET_L` thấp **> 1,000,000 ns (> 1.0 ms)**.
   - Xác nhận `[T13]` ở chế độ `MSG2_ONLY_MODE = 1`: Msg 01 không gây `irq_o` và không ghi đè dữ liệu Msg 02; Msg 02 cập nhật đủ 14 trường và dựng `irq_o = 1`.
 
-### Gate 3 — Biên dịch nghiêm ngặt & Chạy Unit Test C trên Host (`TC-DRV-01`–`16`)
+### Gate 3 — Biên dịch nghiêm ngặt & Chạy Unit Test C trên Host (`TC-DRV-01`–`17`)
 ```bash
 make test-c
 ```
@@ -96,8 +96,8 @@ Khi hoàn tất rà soát, Agent kiểm tra xuất báo cáo theo cấu trúc ng
 ```markdown
 ## Independent Verification Summary — SM-5800 IMU Project
 - Gate 1 (verify_project.ps1): [PASS / FAIL] — <chi tiết>
-- Gate 2 (RTL Sim [T1]-[T13] & Lint): [PASS / FAIL / BLOCKED] — <công cụ & log>
-- Gate 3 (Host C Unit Tests TC-DRV-01..16): [PASS / FAIL / BLOCKED] — <pass/fail count, max .su stack>
+- Gate 2 (RTL Sim [T1]-[T15] & Lint): [PASS / FAIL / BLOCKED] — <công cụ & log>
+- Gate 3 (Host C Unit Tests TC-DRV-01..17): [PASS / FAIL / BLOCKED] — <pass/fail count, max .su stack>
 - Gate 4 (ARM GCC Build & ISR Disasm): [PASS / FAIL / BLOCKED] — <warning count, VFP check>
 - Gate 5 (Manual Deep Review): [PASS / ISSUES FOUND] — <liệt kê file:line nếu có lỗi>
 - Gate 6 (Docs & Traceability): [PASS / ISSUES FOUND] — <nhận xét LLR/SDD/SVR>

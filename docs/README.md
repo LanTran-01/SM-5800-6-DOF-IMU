@@ -32,15 +32,15 @@ IP Core viết bằng **Verilog-2001 (IEEE 1364-2001)**, tuân thủ chuẩn **A
 | `rtl/sm5800_msg_parser.v` | Giải mã gói SM-5800 (Addr `0x0A`, Msg ID 1 = 20B / 600 Hz, Msg ID 2 = 44B / 100 Hz), phân biệt rõ 2 chân đầu ra `msg1_valid_o` và `msg2_valid_o`, hỗ trợ `msg2_only_mode_i` (100 Hz) & `msg1_only_mode_i` (600 Hz); giám sát bộ đếm 4-bit, lỗi BIT và watchdog mất dữ liệu. |
 | `rtl/sm5800_axi4_lite_if.v` | Giao diện Slave AMBA AXI4-Lite đầy đủ (nhận AW/W độc lập mọi thứ tự, hỗ trợ `WSTRB`, khóa snapshot `DATA_LOCK` chống xé dữ liệu, ngắt W1C 7 nguồn gồm `MSG1_READY` / `MSG2_READY` riêng biệt, điều khiển `RESET_L` / `BIT_L` từ PS). |
 | `tb/sm5800_sensor_model.v` | Mô hình mô phỏng cảm biến SM-5800 (bit-stuffing, CRC-16-CCITT chuẩn Z8530, Shared Flag, tiêm lỗi). |
-| `tb/tb_sm5800_imu_axi.v` | Testbench tự kiểm tra toàn diện 13 kịch bản (`[T1]`–`[T13]`, gồm kiểm tra tách chân `msg1_valid_o`/`msg2_valid_o`, chế độ `MSG1_ONLY_MODE` và chế độ 100 Hz `MSG2_ONLY_MODE`). |
+| `tb/tb_sm5800_imu_axi.v` | Testbench tự kiểm tra toàn diện 15 kịch bản (`[T1]`–`[T15]`, gồm kiểm tra tách chân `msg1_valid_o`/`msg2_valid_o`, chế độ `MSG1_ONLY_MODE`, chế độ 100 Hz `MSG2_ONLY_MODE`, runt frame và watchdog). |
 | `driver/sm5800_regs.h` | Định nghĩa địa chỉ thanh ghi (gồm Motion Control + Spatial Data `0x40`–`0x54`), `_MASK` và `_SHIFT`. |
 | `driver/sm5800_hal.h` / `.c` | Lớp HAL truy cập MMIO AXI4-Lite, barrier `DMB`/`DSB` và vùng găng cho ARM Cortex-A9 PS. |
 | `driver/sm5800_drv.h` / `.c` | Driver C lớp PS tuân thủ MISRA C:2012 + BARR-C:2018 + DO-178A/B/C: ngắt 100 Hz bản tin `02`, hàm quy đổi 1 lệnh gọi `sm5800_read_msg2_eng()` / `sm5800_raw_to_eng_msg2()` ra SI dễ kiểm chứng, và điều khiển Reset/BIT từ PS → FPGA → IMU. |
 | `driver/sm5800_ps_example.c` | Chương trình mẫu tích hợp GIC ISR 100 Hz, tự kiểm chứng quy đổi 1 g và phục hồi lỗi BIT/Reset từ PS. |
 | `driver/DEVIATION_LOG.md` | Nhật ký ngoại lệ chuẩn *MISRA Compliance:2020* và cờ biên dịch DO-178C. |
-| `docs/LLR_SM5800.md` | Đặc tả yêu cầu mức thấp (64 LLR cho RTL + HAL + Driver + App) truy vết 1-1 với `@req`. |
+| `docs/LLR_SM5800.md` | Đặc tả yêu cầu mức thấp (66 LLR cho RTL + HAL + Driver + App) truy vết 1-1 với `@req`. |
 | `docs/SDD_SM5800.md` | Tài liệu thiết kế chi tiết phần cứng/phần mềm (sơ đồ Mermaid, WCSU, SEU, PDI CRC-32, ma trận truy vết). |
-| `docs/TEST_REPORT_SM5800.md` | Báo cáo kiểm chứng & kiểm thử (SVR): kết quả static/bit-exact đã chạy, kế hoạch `[T1]`–`[T13]`, `TC-DRV-01`–`16`, HIL và bảng ký duyệt. |
+| `docs/TEST_REPORT_SM5800.md` | Báo cáo kiểm chứng & kiểm thử (SVR): kết quả static/bit-exact đã chạy, kế hoạch `[T1]`–`[T15]`, `TC-DRV-01`–`17`, HIL và bảng ký duyệt. |
 
 ---
 
@@ -67,7 +67,7 @@ Mọi thanh ghi rộng 32-bit, căn chỉnh theo 4 byte (`C_S_AXI_ADDR_WIDTH >= 
 | `0x04` | `CTRL` | RW / W1P | `0x0000_0001` | `[0]` `SDLC_CLK_EN`: Bật xung `RCV_CLK` 1.0 MHz.<br>`[1]` `DATA_LOCK`: `1` = đóng băng snapshot toàn bộ thanh ghi dữ liệu & timestamp để đọc đồng nhất; `0` = chế độ trực tiếp.<br>`[2]` `CMD_BIT_EN`: `1` = kéo `BIT_L` xuống mức thấp (Commanded BIT từ PS → FPGA → IMU).<br>`[3]` `IMU_RESET_PULSE` (W1P): Ghi `1` để tạo xung `RESET_L` thấp tự động ≥ `C_RESET_PULSE_US` (mặc định 2.0 ms > 1.0 ms).<br>`[4]` `IMU_RESET_HOLD`: Giữ `RESET_L` thấp thủ công từ PS.<br>`[5]` `SAMPLE_EDGE`: `0` = lấy mẫu `SER_DATA` ở sườn lên `RCV_CLK` (mặc định SDLC); `1` = sườn xuống.<br>`[6]` `CRC_MODE`: `0` = chuẩn SDLC/Z8530 đảo FCS (residue `0xF0B8`); `1` = FCS không đảo (residue `0x0000`).<br>`[7]` `CRC_BYPASS`: Bỏ qua kiểm tra CRC (chỉ dùng gỡ lỗi).<br>`[8]` `CLEAR_STATS` (W1P): Xóa toàn bộ bộ đếm thống kê/lỗi.<br>`[9]` `SOFT_RESET` (W1P): Reset mềm khối SDLC RX, Parser và cờ ngắt.<br>`[10]` `MSG1_ONLY_MODE`: `1` = chỉ commit dữ liệu cho bản tin số 01.<br>`[11]` `MSG2_ONLY_MODE`: `1` = chế độ **100 Hz** chỉ commit toàn bộ 14 trường (Motion Control + Spatial) cho bản tin số 02 (Msg 01 không ghi đè dữ liệu Msg 02; watchdog giám sát Msg 02). |
 | `0x08` | `STATUS` | RO | `0x0000_0000` | `[0]` `FLAGS_ALIVE`: Đang nhận cờ `0x7E`.<br>`[1]` `DATA_ACTIVE`: Đang nhận gói dữ liệu hợp lệ trong ngưỡng watchdog.<br>`[2]` `IMU_FAULT`: Có lỗi BIT trong `STATUS_WORD1[7:4]` hoặc `STATUS_WORD2[15:11]`.<br>`[3]` `MODULE_FAILED`: Cờ chốt `Status Word 1[4]`.<br>`[4]` `DATA_LOCKED`: Trạng thái khóa snapshot.<br>`[5]` `IMU_RESET_BUSY`: Xung reset tự động đang chạy.<br>`[6]` `CMD_BIT_ACTIVE`: Đang kích hoạt `BIT_L`.<br>`[7]` `SDLC_IN_FRAME`: Khối SDLC đã đồng bộ khung.<br>`[15:8]` `LAST_MSG_ID`: ID gói hợp lệ gần nhất (`0x01` / `0x02`).<br>`[19:16]` `LAST_SEQ_CNT`: Bộ đếm 4-bit gần nhất (`SW1[3:0]`).<br>`[23:20]` `LAST_ERR_CODE`: Mã lỗi gói bị loại gần nhất (`[20]`=CRC, `[21]`=Align, `[22]`=Addr, `[23]`=Len/ID).<br>`[24]` `MSG1_ONLY_ACTIVE`, `[25]` `MSG2_ONLY_ACTIVE`. |
 | `0x0C` | `INT_STATUS` | RW1C | `0x0000_0000` | Ghi `1` để xóa: `[0]` `MSG1_READY` (chỉ Msg ID 01), `[1]` `MSG2_READY` (chỉ Msg ID 02 — 100 Hz), `[2]` `IMU_FAULT`, `[3]` `RX_ERROR`, `[4]` `SEQ_GAP`, `[5]` `LINK_TIMEOUT`, `[6]` `MC_ANY_READY`. |
-| `0x10` | `INT_ENABLE` | RW | `0x0000_0000` | Mặt nạ cho phép ngắt `irq_o` ứng với `INT_STATUS[6:0]`. Driver PS bật `0x02` (`MSG2_READY`) để chỉ ngắt ở 100 Hz khi có bản tin 02. |
+| `0x10` | `INT_ENABLE` | RW | `0x0000_0000` | Mặt nạ cho phép ngắt `irq_o` ứng với `INT_STATUS[6:0]`. Driver PS bật `0x26` (`MSG2_READY | IMU_FAULT | LINK_TIMEOUT`) để ngắt dữ liệu ở 100 Hz khi có bản tin 02 kèm giám sát lỗi BIT và mất luồng dữ liệu. |
 | `0x14` | `TIMEOUT_CFG` | RW | `30000` (`0x7530`) | Thời gian watchdog mất dữ liệu (µs). Mặc định 30 ms (= 3 chu kỳ Msg 02 ở 100 Hz). Ghi `0` để tắt. Watchdog được kích hoạt ngay sau reset (phát hiện cảm biến **chưa từng** gửi dữ liệu) và sau mỗi khung hợp lệ; báo `LINK_TIMEOUT` một lần rồi chờ khung hợp lệ kế tiếp. Ở chế độ `MSG2_ONLY` giá trị phải ≥ 12 ms — cấu hình tham số sai sẽ bị chặn ngay lúc tổng hợp/mô phỏng. |
 | `0x18` | `MC_TIMESTAMP` | RO | `0` | Mốc thời gian 32-bit (1 µs/LSB) khi cập nhật Motion Control gần nhất. |
 | `0x1C` | `SP_TIMESTAMP` | RO | `0` | Mốc thời gian 32-bit (1 µs/LSB) khi cập nhật Spatial Data gần nhất. |
@@ -90,7 +90,7 @@ Mọi thanh ghi rộng 32-bit, căn chỉnh theo 4 byte (`C_S_AXI_ADDR_WIDTH >= 
 
 Thư mục `driver/` cung cấp trọn bộ driver C cho vi xử lý PS (ARM Cortex-A / Zynq bare-metal) hoạt động ở chế độ **100 Hz (Bản tin số 02: Motion Control + Spatial Data)** theo ngắt `irq_o`:
 
-1. **Khởi tạo (`sm5800_init`):** Kiểm tra PDI (`schema_version`, phạm vi tham số, `CRC-32`), xác thực `CORE_ID == 0x58000100`, bật `CTRL.MSG2_ONLY_MODE = 1` và chỉ bật ngắt `INT_ENABLE = MSG2_READY (0x02)`.
+1. **Khởi tạo (`sm5800_init`):** Kiểm tra PDI (`schema_version`, phạm vi tham số, `CRC-32`), xác thực `CORE_ID == 0x58000100`, bật `CTRL.MSG2_ONLY_MODE = 1` và bật ngắt `INT_ENABLE = MSG2_READY | IMU_FAULT | LINK_TIMEOUT (0x26)`.
 2. **Ngắt 100 Hz từ PL (`sm5800_irq_isr`):** Đọc & xóa W1C `INT_STATUS`, đồng bộ `DSB`, dựng cờ `is_msg2_pending` (O(1), không vòng lặp, không dấu phẩy động).
 3. **Đọc & Quy đổi 1 lệnh gọi sang đơn vị kiểm chứng được:**
    - `sm5800_read_msg2_eng(p_drv, p_eng)`: Tự khóa `CTRL.SNAP_LOCK`, đọc toàn bộ 15 thanh ghi raw của bản tin 02, nhả khóa và trả về trực tiếp giá trị vật lý SI (`rad/s`, `m/s²`, `rad`, `m/s`, `°C`, cờ lỗi BIT, counter, timestamp `µs`).

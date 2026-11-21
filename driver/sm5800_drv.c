@@ -38,13 +38,13 @@
 /* SM-5800 Sec. 5.2.1 & 5.2.2 physical scaling constants (SI units):
  * - Angular Rate : 2^-20 * 600 rad/s            = 5.722045898e-4 rad/s/LSB
  * - Linear Accel : 2^-14 * 600 * 0.3048 m/s^2   = 0.011162109375 m/s^2/LSB
- * - Delta Angle  : 2^-33 rad                    = 1.164153218e-10 rad/LSB
- * - Delta Vel    : 2^-27 * 0.3048 m/s           = 2.270936966e-9 m/s/LSB
+ * - Delta Angle  : 2^-33 rad                    = 1.1641532182693481e-10 rad
+ * - Delta Vel    : 2^-27 * 0.3048 m/s           = 2.2709369659423828e-9 m/s
  * - Rad to Deg   : 180 / pi                     = 57.2957795 deg/rad */
 #define RATE_LSB_TO_RAD_S       (5.722045898e-4f)
 #define ACCEL_LSB_TO_M_S2       (0.011162109375f)
-#define DANG_LSB_TO_RAD         (1.164153218e-10f)
-#define DVEL_LSB_TO_M_S         (2.270936966e-9f)
+#define DANG_LSB_TO_RAD_F64     (1.1641532182693481e-10)
+#define DVEL_LSB_TO_M_S_F64     (2.2709369659423828e-9)
 #define RAD_TO_DEG_SCALE        (57.2957795f)
 
 /* Bit shift for packing 5 SW2 faults above 4 SW1 fault bits */
@@ -53,6 +53,12 @@
 /* IRQ sources armed at init: 100 Hz sample, BIT fault, sensor silent */
 #define DRV_INT_ENABLE_MASK     (SM5800_INT_MSG2_RDY_MASK  \
                                  | SM5800_INT_IMU_FAULT_MASK \
+                                 | SM5800_INT_TIMEOUT_MASK)
+
+/* Fault/diagnostic IRQ bits latched by ISR into isr_fault_flags */
+#define DRV_INT_FAULT_MASK      (SM5800_INT_IMU_FAULT_MASK \
+                                 | SM5800_INT_RX_ERR_MASK  \
+                                 | SM5800_INT_SEQ_GAP_MASK \
                                  | SM5800_INT_TIMEOUT_MASK)
 
 /* Byte shift constants for deterministic LE PDI serialization */
@@ -167,13 +173,23 @@ sm5800_status_t sm5800_init(sm5800_drv_t * p_drv,
 
         if (SM5800_CORE_ID_EXPECTED != core_id)
         {
+            uint32_t saved_mask = sm5800_hal_enter_crit();
+
             p_drv->state = SM5800_STATE_FAULT;
+            p_drv->is_msg2_pending = false;
+            sm5800_hal_exit_crit(saved_mask);
             result = SM5800_ERR_HW_ID;
         }
         else
         {
             uint32_t ctrl_word = build_ctrl_word(p_cfg);
             uint32_t soft_rst_word = ctrl_word | SM5800_CTRL_SOFT_RST_MASK;
+            uint32_t saved_mask = sm5800_hal_enter_crit();
+
+            /* Mask IRQs and mark UNINIT first so re-init is race-free */
+            p_drv->state = SM5800_STATE_UNINIT;
+            sm5800_hal_write_reg(p_cfg->base_addr, SM5800_REG_INT_ENABLE, 0U);
+            sm5800_hal_dsb();
 
             p_drv->base_addr = p_cfg->base_addr;
             p_drv->ctrl_shadow = ctrl_word;
@@ -181,8 +197,7 @@ sm5800_status_t sm5800_init(sm5800_drv_t * p_drv,
             p_drv->isr_msg2_count = 0U;
             p_drv->isr_fault_flags = 0U;
 
-            /* Disable IRQ, reset parser, apply 100 Hz config, arm Msg 02 IRQ */
-            sm5800_hal_write_reg(p_drv->base_addr, SM5800_REG_INT_ENABLE, 0U);
+            /* Reset parser, apply 100 Hz config, clear pending IRQ flags */
             sm5800_hal_write_reg(p_drv->base_addr,
                                  SM5800_REG_CTRL,
                                  soft_rst_word);
@@ -203,6 +218,7 @@ sm5800_status_t sm5800_init(sm5800_drv_t * p_drv,
                                  SM5800_REG_INT_ENABLE,
                                  DRV_INT_ENABLE_MASK);
             sm5800_hal_dsb();
+            sm5800_hal_exit_crit(saved_mask);
         }
     }
     else
@@ -256,7 +272,7 @@ void sm5800_irq_isr(sm5800_drv_t * p_drv)
 
         if (0U != int_flags)
         {
-            uint32_t aux_bits = int_flags & (~SM5800_INT_MSG2_RDY_MASK);
+            uint32_t aux_bits = int_flags & DRV_INT_FAULT_MASK;
 
             /* Acknowledge hardware W1C flags and drain AXI posted write */
             sm5800_hal_write_reg(p_drv->base_addr,
@@ -361,26 +377,19 @@ sm5800_status_t sm5800_read_msg2_raw(sm5800_drv_t * p_drv,
         uint32_t saved_mask = sm5800_hal_enter_crit();
         bool is_pending = p_drv->is_msg2_pending;
 
-        if (is_pending)
-        {
-            p_drv->is_msg2_pending = false;
-        }
-        else
-        {
-            /* No new 100 Hz Msg 02 interrupt received since last read */
-        }
-        sm5800_hal_exit_crit(saved_mask);
-        sm5800_hal_dmb();
-
         if (!is_pending)
         {
+            sm5800_hal_exit_crit(saved_mask);
             result = SM5800_ERR_NO_SAMPLE;
         }
         else
         {
+            p_drv->is_msg2_pending = false;
             read_locked_msg2_raw(p_drv->base_addr,
                                  p_drv->ctrl_shadow,
                                  p_raw);
+            sm5800_hal_exit_crit(saved_mask);
+            sm5800_hal_dmb();
         }
     }
 
@@ -1153,19 +1162,27 @@ static void convert_raw_to_eng(sm5800_msg2_raw_t const * p_raw,
     sw1_u32 = (uint32_t)p_raw->status_word1;
     sw2_u32 = (uint32_t)p_raw->status_word2;
 
-    /* Scale raw counts into SI units (rad/s, m/s^2, rad, m/s) */
+    /* Scale raw counts into SI units (rad/s, m/s^2, rad, m/s); 32-bit
+     * Spatial deltas use 64-bit double intermediate math to preserve all
+     * 31 magnitude bits before rounding once to float */
     p_eng->rate_x_rad_s = (float)p_raw->rate_x_lsb * RATE_LSB_TO_RAD_S;
     p_eng->rate_y_rad_s = (float)p_raw->rate_y_lsb * RATE_LSB_TO_RAD_S;
     p_eng->rate_z_rad_s = (float)p_raw->rate_z_lsb * RATE_LSB_TO_RAD_S;
     p_eng->accel_x_m_s2 = (float)p_raw->accel_x_lsb * ACCEL_LSB_TO_M_S2;
     p_eng->accel_y_m_s2 = (float)p_raw->accel_y_lsb * ACCEL_LSB_TO_M_S2;
     p_eng->accel_z_m_s2 = (float)p_raw->accel_z_lsb * ACCEL_LSB_TO_M_S2;
-    p_eng->delta_ang_x_rad = (float)p_raw->delta_ang_x_lsb * DANG_LSB_TO_RAD;
-    p_eng->delta_ang_y_rad = (float)p_raw->delta_ang_y_lsb * DANG_LSB_TO_RAD;
-    p_eng->delta_ang_z_rad = (float)p_raw->delta_ang_z_lsb * DANG_LSB_TO_RAD;
-    p_eng->delta_vel_x_m_s = (float)p_raw->delta_vel_x_lsb * DVEL_LSB_TO_M_S;
-    p_eng->delta_vel_y_m_s = (float)p_raw->delta_vel_y_lsb * DVEL_LSB_TO_M_S;
-    p_eng->delta_vel_z_m_s = (float)p_raw->delta_vel_z_lsb * DVEL_LSB_TO_M_S;
+    p_eng->delta_ang_x_rad = (float)((double)p_raw->delta_ang_x_lsb
+                                     * DANG_LSB_TO_RAD_F64);
+    p_eng->delta_ang_y_rad = (float)((double)p_raw->delta_ang_y_lsb
+                                     * DANG_LSB_TO_RAD_F64);
+    p_eng->delta_ang_z_rad = (float)((double)p_raw->delta_ang_z_lsb
+                                     * DANG_LSB_TO_RAD_F64);
+    p_eng->delta_vel_x_m_s = (float)((double)p_raw->delta_vel_x_lsb
+                                     * DVEL_LSB_TO_M_S_F64);
+    p_eng->delta_vel_y_m_s = (float)((double)p_raw->delta_vel_y_lsb
+                                     * DVEL_LSB_TO_M_S_F64);
+    p_eng->delta_vel_z_m_s = (float)((double)p_raw->delta_vel_z_lsb
+                                     * DVEL_LSB_TO_M_S_F64);
 
     p_eng->accel_temp_degc = decode_s8_temp_degc(sw1_u32);
     p_eng->bit_fault_mask = decode_bit_faults(sw1_u32, sw2_u32);

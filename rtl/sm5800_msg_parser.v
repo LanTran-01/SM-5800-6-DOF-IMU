@@ -176,7 +176,8 @@ module sm5800_msg_parser (
     reg        flags_alive_r;
     reg [31:0] data_idle_us_r;
     reg        data_active_r;
-    reg        wd_armed_r;     // 1: watchdog counting (armed at reset & on each valid frame)
+    reg        wd_armed_r;      // 1: watchdog counting (armed at reset & on each valid frame)
+    reg        inhibit_wd_d1_r; // Previous cycle state of (imu_reset_active_i || bit_cmd_active_i)
 
     reg [31:0] msg1_rx_cnt_r;
     reg [31:0] msg2_rx_cnt_r;
@@ -200,8 +201,10 @@ module sm5800_msg_parser (
     wire       len_id_ok_w;
     wire       frame_valid_w;
     wire       frame_runt_w;
+    wire       commit_frame_w;
     wire       stg_fault_w;
     wire [3:0] expected_seq_w;
+    wire       inhibit_wd_w;
 
     assign align_ok_w     = !frame_align_err_i;
     assign crc_pass_w     = frame_crc_ok_i || crc_bypass_i;
@@ -211,10 +214,13 @@ module sm5800_msg_parser (
     assign len_id_ok_w    = is_msg1_w || is_msg2_w;
     assign frame_valid_w  = align_ok_w && crc_pass_w && addr_ok_w && len_id_ok_w;
     assign frame_runt_w   = (byte_cnt_r < P_MIN_FRAME_BYTES);
+    assign commit_frame_w = is_msg1_w ? (!msg2_only_mode_i)
+                                      : (msg2_only_mode_i || !msg1_only_mode_i);
 
     // Status Word 1[7:4] (Mod Fail, C/B/A Gyro PLC) or Status Word 2[15:11] (BIT Tests)
     assign stg_fault_w    = (|stg_status_word1_r[7:4]) || (|stg_status_word2_r[15:11]);
     assign expected_seq_w = prev_seq_cnt_r + 4'd1;
+    assign inhibit_wd_w   = imu_reset_active_i || bit_cmd_active_i;
 
     //--------------------------------------------------------------------------
     // Staging Buffer Byte Collector
@@ -447,8 +453,8 @@ module sm5800_msg_parser (
                         prev_seq_cnt_r <= stg_status_word1_r[3:0];
                         has_prev_seq_r <= 1'b1;
 
-                        // Notify host immediately if SM-5800 reports any BIT fault
-                        if (stg_fault_w) begin
+                        // Notify host when a committed frame reports any BIT fault
+                        if (commit_frame_w && stg_fault_w) begin
                             imu_fault_pulse_r <= 1'b1;
                         end
                     end else begin
@@ -480,6 +486,7 @@ module sm5800_msg_parser (
             data_idle_us_r       <= 32'd0;
             data_active_r        <= 1'b0;
             wd_armed_r           <= 1'b1; // detect a sensor that never sends data
+            inhibit_wd_d1_r      <= 1'b0;
             link_timeout_pulse_r <= 1'b0;
         end else if (soft_rst_i) begin
             flag_idle_us_r       <= 16'd0;
@@ -487,9 +494,11 @@ module sm5800_msg_parser (
             data_idle_us_r       <= 32'd0;
             data_active_r        <= 1'b0;
             wd_armed_r           <= 1'b1;
+            inhibit_wd_d1_r      <= 1'b0;
             link_timeout_pulse_r <= 1'b0;
         end else begin
             link_timeout_pulse_r <= 1'b0;
+            inhibit_wd_d1_r      <= inhibit_wd_w;
 
             // SDLC Flag (0x7E) presence monitor (alive during normal op, Power-Up & Cmd BIT)
             if (flag_detected_i) begin
@@ -509,6 +518,11 @@ module sm5800_msg_parser (
                 data_idle_us_r <= 32'd0;
                 data_active_r  <= 1'b1;
                 wd_armed_r     <= 1'b1;
+            end else if (inhibit_wd_d1_r && !inhibit_wd_w) begin
+                // Re-arm watchdog on release (1 -> 0) of RESET_L or BIT_L while
+                // preserving DATA_ACTIVE drop during active BIT/Reset testing
+                data_idle_us_r <= 32'd0;
+                wd_armed_r     <= 1'b1;
             end else if (tick_1us_i && wd_armed_r && (timeout_us_i != 32'd0)) begin
                 // Armed from reset (start-up silence) and after every valid frame;
                 // one-shot: disarms on expiry until the next valid frame arrives.
@@ -516,7 +530,7 @@ module sm5800_msg_parser (
                     data_active_r <= 1'b0;
                     wd_armed_r    <= 1'b0;
                     // Suppress false timeout IRQ during intentional IMU reset or Commanded BIT
-                    if (!imu_reset_active_i && !bit_cmd_active_i) begin
+                    if (!inhibit_wd_w) begin
                         link_timeout_pulse_r <= 1'b1;
                     end
                 end else begin
@@ -561,7 +575,7 @@ module sm5800_msg_parser (
     assign imu_fault_active_o   = (|live_status_word1_r[7:4]) || (|live_status_word2_r[15:11]);
     assign module_failed_o      = live_status_word1_r[4];
     assign last_msg_id_o        = last_msg_id_r;
-    assign last_seq_cnt_o       = live_status_word1_r[3:0];
+    assign last_seq_cnt_o       = prev_seq_cnt_r;
     assign last_err_code_o      = last_err_code_r;
 
     assign msg1_rx_cnt_o        = msg1_rx_cnt_r;

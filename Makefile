@@ -44,12 +44,12 @@ $(BUILD_DIR):
 verify-static:
 	$(PWSH) -NoProfile -ExecutionPolicy Bypass -File scripts/verify_project.ps1
 
-# Gate 2a: RTL simulation via Icarus Verilog ([T1]-[T13])
+# Gate 2a: RTL simulation via Icarus Verilog ([T1]-[T15])
 sim: $(BUILD_DIR)
 	$(IVERILOG) -g2001 -Wall -o $(BUILD_DIR)/sim_sm5800.vvp $(RTL_SRCS) $(TB_SRCS)
 	$(VVP) $(BUILD_DIR)/sim_sm5800.vvp
 
-# Gate 2b: RTL simulation via Xilinx Vivado xsim ([T1]-[T13])
+# Gate 2b: RTL simulation via Xilinx Vivado xsim ([T1]-[T15])
 xsim:
 	xvlog $(RTL_SRCS) $(TB_SRCS)
 	xelab -debug typical tb_sm5800_imu_axi -s sim_sm5800
@@ -86,7 +86,7 @@ check-guards:
 	$(call guard_must_fail,$(GUARD_P)C_S_AXI_ADDR_WIDTH=6,AXI_ADDR_LT_8)
 	@echo "Parameter guards: ALL PASSED"
 
-# Gate 3: Host C Unit Tests ([TC-DRV-01]-[TC-DRV-16]) with Mock HAL
+# Gate 3: Host C Unit Tests ([TC-DRV-01]-[TC-DRV-17]) with Mock HAL
 test-c: $(BUILD_DIR)
 	$(HOST_CC) $(STRICT_CFLAGS) -c driver/sm5800_drv.c -o $(BUILD_DIR)/sm5800_drv.o
 	$(HOST_CC) $(TEST_CFLAGS) -c tests/mock_sm5800_hal.c -o $(BUILD_DIR)/mock_sm5800_hal.o

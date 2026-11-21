@@ -82,8 +82,8 @@ $modPorts = @{}
 
 foreach ($f in ($rtlFiles + $tbFiles)) {
     $raw = Get-Content $f.FullName -Raw
-    $lines = Get-Content $f.FullName
-    $codeOnly = ($lines | ForEach-Object { $_ -replace '//.*', '' }) -join "`n"
+    $noBlk = [regex]::Replace($raw, '/\*[\s\S]*?\*/', '')
+    $codeOnly = (($noBlk -split "`n") | ForEach-Object { $_ -replace '//.*', '' }) -join "`n"
     $codeNoStr = [regex]::Replace($codeOnly, '"[^"]*"', '""')
 
     if (($raw -notmatch '`default_nettype\s+none') -or ($raw -notmatch '`default_nettype\s+wire')) {
@@ -119,7 +119,8 @@ foreach ($f in ($rtlFiles + $tbFiles)) {
 $instChecked = 0
 foreach ($f in ($rtlFiles + $tbFiles)) {
     $raw = Get-Content $f.FullName -Raw
-    $codeOnly = (($raw -split "`n") | ForEach-Object { $_ -replace '//.*', '' }) -join "`n"
+    $noBlk = [regex]::Replace($raw, '/\*[\s\S]*?\*/', '')
+    $codeOnly = (($noBlk -split "`n") | ForEach-Object { $_ -replace '//.*', '' }) -join "`n"
     foreach ($mName in $modPorts.Keys) {
         $pattern = "(?<!module\s+)\b$mName\b\s*(?:#\s*\([^;]*?\)\s*)?(u_\w+)\s*\(([^;]*?)\);"
         foreach ($m in [regex]::Matches($codeOnly, $pattern)) {
@@ -248,10 +249,12 @@ foreach ($f in $cFiles) {
         }
     }
     if ($f.Extension -eq '.c') {
-        $depth = 0; $fnStart = -1
+        $depth = 0; $fnStart = -1; $prevLine = ""
         for ($i = 0; $i -lt $lines.Count; $i++) {
             $l = ($lines[$i] -replace '/\*.*?\*/', '').Trim()
-            if (($depth -eq 0) -and ($l -eq '{')) { $fnStart = $i; $depth = 1 }
+            if (($depth -eq 0) -and ($l -eq '{')) {
+                if ($prevLine -match '\)\s*$') { $fnStart = $i; $depth = 1 }
+            }
             elseif ($depth -gt 0) {
                 $depth += (([regex]::Matches($l, '\{')).Count - ([regex]::Matches($l, '\}')).Count)
                 if (($depth -eq 0) -and (($i - $fnStart + 1) -gt 100)) {
@@ -259,6 +262,7 @@ foreach ($f in $cFiles) {
                     $gateDErr++
                 }
             }
+            if ($l.Length -gt 0) { $prevLine = $l }
         }
     }
 }
@@ -274,10 +278,12 @@ $rtlOffsets = @{}
 foreach ($m in [regex]::Matches($axiRtl, "P_REG_(\w+)\s*=\s*6'h([0-9A-Fa-f]+)")) {
     $rtlOffsets[$m.Groups[1].Value] = ([Convert]::ToInt32($m.Groups[2].Value, 16) * 4)
 }
+$cOffsets = @{}
 $checkedRegs = 0
 foreach ($m in [regex]::Matches($regsH, '#define\s+SM5800_REG_(\w+)\s+\(0x([0-9A-Fa-f]+)U\)')) {
     $rName = $m.Groups[1].Value
     $cOff  = [Convert]::ToInt32($m.Groups[2].Value, 16)
+    $cOffsets[$rName] = $cOff
     if (-not $rtlOffsets.ContainsKey($rName)) {
         Write-Host "  [REG] C reg $rName missing in RTL"
         $gateEErr++
@@ -286,6 +292,12 @@ foreach ($m in [regex]::Matches($regsH, '#define\s+SM5800_REG_(\w+)\s+\(0x([0-9A
         $gateEErr++
     } else {
         $checkedRegs++
+    }
+}
+foreach ($rtlReg in $rtlOffsets.Keys) {
+    if (-not $cOffsets.ContainsKey($rtlReg)) {
+        Write-Host "  [REG] RTL reg $rtlReg missing in sm5800_regs.h"
+        $gateEErr++
     }
 }
 
@@ -298,14 +310,21 @@ foreach ($f in $cFiles) {
     foreach ($m in [regex]::Matches($raw, '@req\s+(LLR-SM5800-[A-Z0-9-]+)')) { [void]$reqSet.Add($m.Groups[1].Value) }
     foreach ($m in [regex]::Matches($raw, '@design\s+(SDD-SM5800-[0-9.]+)')) { [void]$desSet.Add($m.Groups[1].Value) }
 }
-foreach ($r in $reqSet) { if ($llrTxt -notmatch [regex]::Escape($r)) { Write-Host "  [TRACE] Missing LLR: $r"; $gateEErr++ } }
+foreach ($r in $reqSet) { if ($llrTxt -notmatch [regex]::Escape($r)) { Write-Host "  [TRACE] Missing LLR in docs: $r"; $gateEErr++ } }
+foreach ($m in [regex]::Matches($llrTxt, '`(LLR-SM5800-(?:REG|HAL|DRV|APP)-\d+)`')) {
+    $docLlr = $m.Groups[1].Value
+    if (-not $reqSet.Contains($docLlr)) {
+        Write-Host "  [TRACE] C LLR in docs missing @req in driver/: $docLlr"
+        $gateEErr++
+    }
+}
 foreach ($d in $desSet) {
     if (($sddTxt -notmatch [regex]::Escape($d)) -and ($llrTxt -notmatch [regex]::Escape($d))) {
         Write-Host "  [TRACE] Missing SDD: $d"
         $gateEErr++
     }
 }
-Report-Gate "Gate E: Reg Parity & LLR/SDD Traceability" $gateEErr "$checkedRegs regs + $($reqSet.Count) @req + $($desSet.Count) @design matched"
+Report-Gate "Gate E: Reg Parity & LLR/SDD Traceability" $gateEErr "$checkedRegs regs + $($reqSet.Count) @req + $($desSet.Count) @design matched (bi-directional)"
 
 Write-Host "========================================================================"
 if ($TotalFailures -eq 0) {

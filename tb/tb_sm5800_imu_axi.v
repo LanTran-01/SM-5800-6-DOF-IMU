@@ -15,6 +15,8 @@
 //               [T9]  Commanded BIT control (BIT_L) & flag-only operation
 //               [T10] Hardware-timed RESET_L pulse (>1.0 ms spec verification)
 //               [T11] Data watchdog timeout & LINK_TIMEOUT interrupt
+//               [T12] Msg ID 01-only mode (MSG1_ONLY_MODE) & distinct Msg1 IRQ
+//               [T13] 100 Hz Msg ID 02-only mode (MSG2_ONLY_MODE) & Msg2 IRQ
 //               [T14] Runt frames / stuck-low line between frames (ISO 3309)
 //               [T15] Watchdog start-up silence, one-shot, re-arm, safe default
 //==============================================================================
