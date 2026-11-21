@@ -405,6 +405,7 @@ static void test_fault_irq(void)
 {
     sm5800_drv_t drv = { .state = SM5800_STATE_UNINIT };
     sm5800_config_t cfg = make_valid_cfg();
+    sm5800_msg2_raw_t raw = { .timestamp_us = 0U };
     uint32_t faults = 0xFFFFFFFFU;
 
     /* TC-DRV-17: fault IRQs reach the PS even when no Msg 02 arrives */
@@ -428,6 +429,12 @@ static void test_fault_irq(void)
                "TC-DRV-17: take_irq_faults OK after nominal 0x43 IRQ");
     check_cond(0U == faults,
                "TC-DRV-17: non-fault bits (MSG1, MC_ANY) filtered out");
+
+    /* Application consumes that Msg 02 sample so the pending flag is clear
+     * before the link-timeout scenario below */
+    check_cond(sm5800_is_msg2_pending(&drv)
+               && (SM5800_OK == sm5800_read_msg2_raw(&drv, &raw)),
+               "TC-DRV-17: nominal Msg 02 sample consumed");
 
     /* Sensor goes silent: FPGA raises only LINK_TIMEOUT (no MSG2_READY) */
     mock_hal_set_reg(SM5800_REG_INT_STATUS, SM5800_INT_TIMEOUT_MASK);
