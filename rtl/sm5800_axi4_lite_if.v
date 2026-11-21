@@ -22,7 +22,7 @@ module sm5800_axi4_lite_if #(
     parameter integer C_DEFAULT_CLK_EN     = 1,
     parameter integer C_DEFAULT_MSG1_ONLY  = 0,
     parameter integer C_DEFAULT_MSG2_ONLY  = 0,
-    parameter integer C_DEFAULT_TIMEOUT_US = 5000
+    parameter integer C_DEFAULT_TIMEOUT_US = 30000
 ) (
     //--------------------------------------------------------------------------
     // AMBA AXI4-Lite Slave Interface
@@ -170,13 +170,23 @@ module sm5800_axi4_lite_if #(
     localparam [5:0]  P_REG_DEBUG_CRC     = 6'h1B; // 0x6C
 
     //--------------------------------------------------------------------------
+    // Elaboration-time guard: the register decoder uses ADDR[7:2] and a fixed
+    // 32-bit data path, so other widths would silently misbehave.
+    //--------------------------------------------------------------------------
+    generate
+        if ((C_S_AXI_ADDR_WIDTH < 8) || (C_S_AXI_DATA_WIDTH != 32)) begin : g_err_axi
+            SM5800_PARAM_ERROR_AXI_ADDR_LT_8_OR_DATA_NOT_32 u_param_error ();
+        end
+    endgenerate
+
+    //--------------------------------------------------------------------------
     // AXI4-Lite Handshake Registers
     //--------------------------------------------------------------------------
     reg                          aw_ready_r;
     reg                          w_ready_r;
     reg                          aw_captured_r;
     reg                          w_captured_r;
-    reg [C_S_AXI_ADDR_WIDTH-1:0] aw_addr_r;
+    reg [5:0]                    aw_word_addr_r; // AWADDR[7:2] (byte bits unused)
     reg [31:0]                   w_data_r;
     reg [3:0]                    w_strb_r;
     reg                          b_valid_r;
@@ -256,7 +266,7 @@ module sm5800_axi4_lite_if #(
     assign b_hs_w         = b_valid_r     && s_axi_bready;
 
     assign wr_fire_w      = !b_valid_r && (aw_captured_r || aw_hs_w) && (w_captured_r || w_hs_w);
-    assign wr_word_addr_w = aw_captured_r ? aw_addr_r[7:2] : s_axi_awaddr[7:2];
+    assign wr_word_addr_w = aw_captured_r ? aw_word_addr_r : s_axi_awaddr[7:2];
     assign wr_data_w      = w_captured_r  ? w_data_r       : s_axi_wdata;
     assign wr_strb_w      = w_captured_r  ? w_strb_r       : s_axi_wstrb;
 
@@ -325,7 +335,7 @@ module sm5800_axi4_lite_if #(
             w_ready_r     <= 1'b0;
             aw_captured_r <= 1'b0;
             w_captured_r  <= 1'b0;
-            aw_addr_r     <= {C_S_AXI_ADDR_WIDTH{1'b0}};
+            aw_word_addr_r <= 6'd0;
             w_data_r      <= 32'd0;
             w_strb_r      <= 4'h0;
             b_valid_r     <= 1'b0;
@@ -334,7 +344,7 @@ module sm5800_axi4_lite_if #(
             if (!b_valid_r) begin
                 // Independent AW channel capture
                 if (aw_hs_w) begin
-                    aw_addr_r     <= s_axi_awaddr;
+                    aw_word_addr_r <= s_axi_awaddr[7:2];
                     aw_captured_r <= 1'b1;
                     aw_ready_r    <= 1'b0;
                 end else if (!aw_captured_r) begin

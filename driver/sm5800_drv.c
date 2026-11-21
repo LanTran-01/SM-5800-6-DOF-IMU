@@ -50,6 +50,11 @@
 /* Bit shift for packing 5 SW2 faults above 4 SW1 fault bits */
 #define SW2_FAULT_OUT_SHIFT     (4U)
 
+/* IRQ sources armed at init: 100 Hz sample, BIT fault, sensor silent */
+#define DRV_INT_ENABLE_MASK     (SM5800_INT_MSG2_RDY_MASK  \
+                                 | SM5800_INT_IMU_FAULT_MASK \
+                                 | SM5800_INT_TIMEOUT_MASK)
+
 /* Byte shift constants for deterministic LE PDI serialization */
 #define SHIFT_BYTE_1            (8U)
 #define SHIFT_BYTE_2            (16U)
@@ -193,10 +198,10 @@ sm5800_status_t sm5800_init(sm5800_drv_t * p_drv,
             p_drv->state = SM5800_STATE_READY;
             sm5800_hal_dmb();
 
-            /* Arm FPGA interrupt strictly for 100 Hz Message ID 02 */
+            /* Arm 100 Hz Msg 02 IRQ plus IMU fault and link-timeout IRQs */
             sm5800_hal_write_reg(p_drv->base_addr,
                                  SM5800_REG_INT_ENABLE,
-                                 SM5800_INT_MSG2_RDY_MASK);
+                                 DRV_INT_ENABLE_MASK);
             sm5800_hal_dsb();
         }
     }
@@ -291,6 +296,32 @@ void sm5800_irq_isr(sm5800_drv_t * p_drv)
     {
         /* Guard against NULL or uninitialized handle in ISR context */
     }
+}
+
+
+sm5800_status_t sm5800_take_irq_faults(sm5800_drv_t * p_drv,
+                                       uint32_t * p_faults)
+{
+    sm5800_status_t result = SM5800_OK;
+
+    if ((NULL == p_drv) || (NULL == p_faults))
+    {
+        result = SM5800_ERR_PARAM;
+    }
+    else if (SM5800_STATE_READY != p_drv->state)
+    {
+        result = SM5800_ERR_STATE;
+    }
+    else
+    {
+        uint32_t saved_mask = sm5800_hal_enter_crit();
+
+        *p_faults = p_drv->isr_fault_flags;
+        p_drv->isr_fault_flags = 0U;
+        sm5800_hal_exit_crit(saved_mask);
+    }
+
+    return result;
 }
 
 

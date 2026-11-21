@@ -8,6 +8,9 @@
 //                 * Msg ID 1 (Motion Control)          : 20 bytes (Addr+ID+16B+2B CRC)
 //                 * Msg ID 2 (Motion Control + Spatial): 44 bytes (Addr+ID+40B+2B CRC)
 //                 * Octet-aligned & CRC-16-CCITT valid (unless crc_bypass_i=1)
+//               - Silently discards runt frames (< 32 bits between flags,
+//                 ISO 3309 / ISO 13239) so line noise or a stuck-low line
+//                 between frames never raises RX_ERROR or error counters.
 //               - Assembles Little-Endian 16-bit & 32-bit fields in staging
 //                 registers and atomically commits to live outputs ONLY when
 //                 a frame passes ALL checks (zero corruption on bad frames).
@@ -104,6 +107,8 @@ module sm5800_msg_parser (
     localparam [5:0]  P_LEN_MSG1      = 6'd20; // Addr(1) + ID(1) + Data(16) + CRC(2)
     localparam [5:0]  P_LEN_MSG2      = 6'd44; // Addr(1) + ID(1) + Data(40) + CRC(2)
     localparam [15:0] P_FLAG_ALIVE_US = 16'd2000; // 2 ms flag activity window
+    // ISO 3309: fewer than 32 bits between flags is not a frame -> ignore silently
+    localparam [5:0]  P_MIN_FRAME_BYTES = 6'd4;
 
     //--------------------------------------------------------------------------
     // Staging Registers (filled during frame reception, never exposed directly)
@@ -171,6 +176,7 @@ module sm5800_msg_parser (
     reg        flags_alive_r;
     reg [31:0] data_idle_us_r;
     reg        data_active_r;
+    reg        wd_armed_r;     // 1: watchdog counting (armed at reset & on each valid frame)
 
     reg [31:0] msg1_rx_cnt_r;
     reg [31:0] msg2_rx_cnt_r;
@@ -193,6 +199,7 @@ module sm5800_msg_parser (
     wire       is_msg2_w;
     wire       len_id_ok_w;
     wire       frame_valid_w;
+    wire       frame_runt_w;
     wire       stg_fault_w;
     wire [3:0] expected_seq_w;
 
@@ -203,6 +210,7 @@ module sm5800_msg_parser (
     assign is_msg2_w      = (stg_msg_id_r == P_MSG_ID_MC_SP) && (byte_cnt_r == P_LEN_MSG2) && !stg_overflow_r;
     assign len_id_ok_w    = is_msg1_w || is_msg2_w;
     assign frame_valid_w  = align_ok_w && crc_pass_w && addr_ok_w && len_id_ok_w;
+    assign frame_runt_w   = (byte_cnt_r < P_MIN_FRAME_BYTES);
 
     // Status Word 1[7:4] (Mod Fail, C/B/A Gyro PLC) or Status Word 2[15:11] (BIT Tests)
     assign stg_fault_w    = (|stg_status_word1_r[7:4]) || (|stg_status_word2_r[15:11]);
@@ -372,7 +380,8 @@ module sm5800_msg_parser (
                 if (frame_abort_i) begin
                     rx_err_pulse_r  <= 1'b1;
                     abort_err_cnt_r <= (clear_stats_i ? 16'd0 : abort_err_cnt_r) + 16'd1;
-                end else if (frame_end_i) begin
+                end else if (frame_end_i && !frame_runt_w) begin
+                    // (Runt frames < 32 bits fall through: no error, no debug update)
                     // Always latch last-frame debug snapshot for bring-up diagnostics
                     debug_crc_residue_r <= frame_crc_residue_i;
                     debug_frame_len_r   <= byte_cnt_r;
@@ -470,12 +479,14 @@ module sm5800_msg_parser (
             flags_alive_r        <= 1'b0;
             data_idle_us_r       <= 32'd0;
             data_active_r        <= 1'b0;
+            wd_armed_r           <= 1'b1; // detect a sensor that never sends data
             link_timeout_pulse_r <= 1'b0;
         end else if (soft_rst_i) begin
             flag_idle_us_r       <= 16'd0;
             flags_alive_r        <= 1'b0;
             data_idle_us_r       <= 32'd0;
             data_active_r        <= 1'b0;
+            wd_armed_r           <= 1'b1;
             link_timeout_pulse_r <= 1'b0;
         end else begin
             link_timeout_pulse_r <= 1'b0;
@@ -497,9 +508,13 @@ module sm5800_msg_parser (
                 (msg2_only_mode_i ? is_msg2_w : (msg1_only_mode_i ? is_msg1_w : 1'b1))) begin
                 data_idle_us_r <= 32'd0;
                 data_active_r  <= 1'b1;
-            end else if (tick_1us_i && data_active_r && (timeout_us_i != 32'd0)) begin
+                wd_armed_r     <= 1'b1;
+            end else if (tick_1us_i && wd_armed_r && (timeout_us_i != 32'd0)) begin
+                // Armed from reset (start-up silence) and after every valid frame;
+                // one-shot: disarms on expiry until the next valid frame arrives.
                 if (data_idle_us_r >= timeout_us_i) begin
                     data_active_r <= 1'b0;
+                    wd_armed_r    <= 1'b0;
                     // Suppress false timeout IRQ during intentional IMU reset or Commanded BIT
                     if (!imu_reset_active_i && !bit_cmd_active_i) begin
                         link_timeout_pulse_r <= 1'b1;

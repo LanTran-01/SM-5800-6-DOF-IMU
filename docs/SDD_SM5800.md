@@ -155,11 +155,12 @@ Mọi trường bit được định nghĩa thuần bằng cặp `_MASK` / `_SHI
   - `main()` → `sm5800_read_msg2_eng()` (`sm5800_msg2_raw_t`: `56 B`) → `sm5800_read_msg2_raw()` → `read_locked_msg2_raw()` (`16 × uint32_t`: `64 B`) → `sm5800_hal_read_reg()` (`8 B`).
   - Mỗi khung hàm đơn lẻ đều dưới `128 B` (khuyến nghị kiểm chứng với `-Wstack-usage=256 -fstack-usage`), mọi buffer cục bộ đều **≤ 64 byte** (`sm5800_msg2_raw_t = 56 B`, `sm5800_msg2_eng_t = 60 B`, `serial_octets = 19 B`).
 
-### 3.6 `SDD-SM5800-4.0` – `4.6` — Ứng dụng mẫu PS (`driver/sm5800_ps_example.c`)
+### 3.6 `SDD-SM5800-4.0` – `4.7` — Ứng dụng mẫu PS (`driver/sm5800_ps_example.c`)
 - `4.0`–`4.2`: Khởi tạo tĩnh handle, ánh xạ `sm5800_ps_gic_isr()` vào GIC, vòng lặp đọc có cận trên `APP_MAX_POLL_CYCLES`.
 - `4.3` (`init_imu_100hz`): Tạo PDI `is_msg2_only = true`, tính CRC-32 và gọi `sm5800_init()`.
 - `4.4` (`handle_msg2_and_faults`) & `4.6` (`run_commanded_bit_cycle`): Tự động ra lệnh `RESET_L > 1 ms` khi `has_module_failed == true`, hoặc chạy chu trình **Commanded BIT (`BIT_L`)** khi phát hiện cờ `bit_fault_mask != 0`.
 - `4.5` (`verify_raw_to_eng_math`): Tự kiểm chứng toán học phép quy đổi `sm5800_raw_to_eng_msg2()` với vector `1 g` bằng ngưỡng khoảng (`9.75f .. 9.86f`), không so sánh bằng `==` trên `float`.
+- `4.7` (`handle_link_faults`) & `3.3.19` (`sm5800_take_irq_faults`): FPGA báo `LINK_TIMEOUT` khi cảm biến im lặng (kể cả ngay sau bật nguồn); ISR chốt cờ vào `isr_fault_flags`, vòng lặp chính lấy-và-xóa cờ trong vùng găng rồi phát xung `RESET_L` để khởi động lại cảm biến, tối đa 3 lần liên tiếp.
 
 ---
 
@@ -176,6 +177,6 @@ Mọi trường bit được định nghĩa thuần bằng cặp `_MASK` / `_SHI
 | `HLR-SM5800-02` | `LLR-SM5800-REG-001` | `SDD-SM5800-2.1` | `driver/sm5800_regs.h` | Static Audit, `TC-DRV-01` |
 | `HLR-SM5800-05` | `LLR-SM5800-HAL-001`–`006` | `SDD-SM5800-2.2.1`–`2.2.6` | `driver/sm5800_hal.h`, `driver/sm5800_hal.c` | Static Audit, `DEV-001/002`, `TC-DRV-01` |
 | `HLR-SM5800-04`, `05` | `LLR-SM5800-DRV-001`–`008` | `SDD-SM5800-3.0`–`3.2` | `driver/sm5800_drv.h` | Static Audit, `TC-DRV-02`–`08` |
-| `HLR-SM5800-02`–`05` | `LLR-SM5800-DRV-010`–`027` | `SDD-SM5800-3.3.1`–`3.3.18` | `driver/sm5800_drv.h`, `driver/sm5800_drv.c` | `TC-DRV-01`–`TC-DRV-15` |
+| `HLR-SM5800-02`–`05` | `LLR-SM5800-DRV-010`–`028` | `SDD-SM5800-3.3.1`–`3.3.19` | `driver/sm5800_drv.h`, `driver/sm5800_drv.c` | `TC-DRV-01`–`TC-DRV-15`, `TC-DRV-17` |
 | `HLR-SM5800-04`, `05` | `LLR-SM5800-DRV-030`–`041` | `SDD-SM5800-3.4.1`–`3.4.12` | `driver/sm5800_drv.c` | `TC-DRV-01`–`TC-DRV-15` |
-| `HLR-SM5800-03`, `04` | `LLR-SM5800-APP-001`–`007` | `SDD-SM5800-4.0`–`4.6` | `driver/sm5800_ps_example.c` | `TC-DRV-16`, HIL |
+| `HLR-SM5800-03`, `04` | `LLR-SM5800-APP-001`–`008` | `SDD-SM5800-4.0`–`4.7` | `driver/sm5800_ps_example.c` | `TC-DRV-16`, HIL |

@@ -10,7 +10,7 @@ Dự án trọn gói giao tiếp cảm biến quán tính **SM-5800 6-DOF Motion
 IMU/
 ├── README.md                        # Tổng quan dự án và hướng dẫn chạy nhanh
 ├── AGENT_VERIFICATION_GUIDE.md      # Quy trình 7 cổng kiểm chứng cho AI Agent / QA độc lập
-├── Makefile                         # Mục tiêu tự động: verify-static, sim, xsim, lint-rtl, test-c, build-arm
+├── Makefile                         # Mục tiêu tự động: verify-static, sim, xsim, lint-rtl, check-guards, test-c, build-arm
 ├── .gitignore
 ├── rtl/                             # Mã nguồn FPGA Verilog-2001 (IEEE 1364-2001, AMBA AXI4-Lite)
 │   ├── sm5800_filelist.f            # Danh sách thứ tự biên dịch RTL cho Vivado/Verilator/Icarus
@@ -53,7 +53,8 @@ IMU/
    ```bash
    make sim        # Icarus Verilog
    make xsim       # Xilinx Vivado
-   make lint-rtl   # Verilator lint
+   make lint-rtl   # Verilator lint (-Wall, 0 warning)
+   make check-guards  # Cấu hình tham số sai (clock ±2%, RESET_L ≤ 1 ms, timeout 100 Hz, AXI) phải bị chặn lúc build
    ```
 3. **Biên dịch nghiêm ngặt §12 & chạy Unit Test C (`TC-DRV-01`–`16`) trên máy host:**
    ```bash

@@ -37,35 +37,35 @@ $reqFiles = @(
     "AGENT_VERIFICATION_GUIDE.md",
     "Makefile",
     ".gitignore",
-    "rtl\sm5800_filelist.f",
-    "rtl\sm5800_crc16_ccitt.v",
-    "rtl\sm5800_clk_ctrl.v",
-    "rtl\sm5800_sdlc_rx.v",
-    "rtl\sm5800_msg_parser.v",
-    "rtl\sm5800_axi4_lite_if.v",
-    "rtl\sm5800_imu_axi_top.v",
-    "tb\sm5800_sensor_model.v",
-    "tb\tb_sm5800_imu_axi.v",
-    "driver\sm5800_regs.h",
-    "driver\sm5800_hal.h",
-    "driver\sm5800_hal.c",
-    "driver\sm5800_drv.h",
-    "driver\sm5800_drv.c",
-    "driver\sm5800_ps_example.c",
-    "driver\DEVIATION_LOG.md",
-    "tests\mock_sm5800_hal.h",
-    "tests\mock_sm5800_hal.c",
-    "tests\test_sm5800_drv.c",
-    "docs\README.md",
-    "docs\LLR_SM5800.md",
-    "docs\SDD_SM5800.md",
-    "docs\TEST_REPORT_SM5800.md",
-    "scripts\verify_project.ps1"
+    "rtl/sm5800_filelist.f",
+    "rtl/sm5800_crc16_ccitt.v",
+    "rtl/sm5800_clk_ctrl.v",
+    "rtl/sm5800_sdlc_rx.v",
+    "rtl/sm5800_msg_parser.v",
+    "rtl/sm5800_axi4_lite_if.v",
+    "rtl/sm5800_imu_axi_top.v",
+    "tb/sm5800_sensor_model.v",
+    "tb/tb_sm5800_imu_axi.v",
+    "driver/sm5800_regs.h",
+    "driver/sm5800_hal.h",
+    "driver/sm5800_hal.c",
+    "driver/sm5800_drv.h",
+    "driver/sm5800_drv.c",
+    "driver/sm5800_ps_example.c",
+    "driver/DEVIATION_LOG.md",
+    "tests/mock_sm5800_hal.h",
+    "tests/mock_sm5800_hal.c",
+    "tests/test_sm5800_drv.c",
+    "docs/README.md",
+    "docs/LLR_SM5800.md",
+    "docs/SDD_SM5800.md",
+    "docs/TEST_REPORT_SM5800.md",
+    "scripts/verify_project.ps1"
 )
 $gateAErr = 0
 foreach ($rel in $reqFiles) {
     $full = Join-Path $Root $rel
-    if (-not (Test-Path $full) -or ((Get-Item $full).Length -eq 0)) {
+    if (-not (Test-Path $full) -or ((Get-Item -Force $full).Length -eq 0)) {
         Write-Host "  Missing or empty: $rel"
         $gateAErr++
     }
@@ -76,8 +76,8 @@ Report-Gate "Gate A: Project File Completeness" $gateAErr "$($reqFiles.Count) re
 # Gate B: Verilog-2001 Static Lint & Port Binding Cross-Check
 #------------------------------------------------------------------------------
 $gateBErr = 0
-$rtlFiles = Get-ChildItem (Join-Path $Root "rtl\*.v")
-$tbFiles  = Get-ChildItem (Join-Path $Root "tb\*.v")
+$rtlFiles = Get-ChildItem (Join-Path $Root "rtl/*.v")
+$tbFiles  = Get-ChildItem (Join-Path $Root "tb/*.v")
 $modPorts = @{}
 
 foreach ($f in ($rtlFiles + $tbFiles)) {
@@ -213,7 +213,7 @@ Report-Gate "Gate C: Bit-Exact CRC-16 & SDLC Deframer" $gateCErr "Check=0x906E, 
 # Gate D: Production C Coding Rules Static Audit (driver/*.c, driver/*.h)
 #------------------------------------------------------------------------------
 $gateDErr = 0
-$cFiles = Get-ChildItem (Join-Path $Root "driver\*.c"), (Join-Path $Root "driver\*.h")
+$cFiles = Get-ChildItem (Join-Path $Root "driver/*.c"), (Join-Path $Root "driver/*.h")
 foreach ($f in $cFiles) {
     $lines = Get-Content $f.FullName
     $raw   = Get-Content $f.FullName -Raw
@@ -268,8 +268,8 @@ Report-Gate "Gate D: Production C Rules Static Audit" $gateDErr "$($cFiles.Count
 # Gate E: Register Offset Parity (RTL <-> C) & Traceability Audit
 #------------------------------------------------------------------------------
 $gateEErr = 0
-$axiRtl = Get-Content (Join-Path $Root "rtl\sm5800_axi4_lite_if.v") -Raw
-$regsH  = Get-Content (Join-Path $Root "driver\sm5800_regs.h") -Raw
+$axiRtl = Get-Content (Join-Path $Root "rtl/sm5800_axi4_lite_if.v") -Raw
+$regsH  = Get-Content (Join-Path $Root "driver/sm5800_regs.h") -Raw
 $rtlOffsets = @{}
 foreach ($m in [regex]::Matches($axiRtl, "P_REG_(\w+)\s*=\s*6'h([0-9A-Fa-f]+)")) {
     $rtlOffsets[$m.Groups[1].Value] = ([Convert]::ToInt32($m.Groups[2].Value, 16) * 4)
@@ -289,8 +289,8 @@ foreach ($m in [regex]::Matches($regsH, '#define\s+SM5800_REG_(\w+)\s+\(0x([0-9A
     }
 }
 
-$llrTxt = Get-Content (Join-Path $Root "docs\LLR_SM5800.md") -Raw
-$sddTxt = Get-Content (Join-Path $Root "docs\SDD_SM5800.md") -Raw
+$llrTxt = Get-Content (Join-Path $Root "docs/LLR_SM5800.md") -Raw
+$sddTxt = Get-Content (Join-Path $Root "docs/SDD_SM5800.md") -Raw
 $reqSet = New-Object System.Collections.Generic.HashSet[string]
 $desSet = New-Object System.Collections.Generic.HashSet[string]
 foreach ($f in $cFiles) {

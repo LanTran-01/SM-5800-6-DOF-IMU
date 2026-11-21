@@ -10,6 +10,7 @@
 #include <stdint.h>
 
 #include "sm5800_drv.h"
+#include "sm5800_regs.h"
 
 /* Example AXI4-Lite peripheral base address from Vivado Address Editor */
 #define IMU_AXI_BASE_ADDR       ((uintptr_t)0x43C00000U)
@@ -23,11 +24,16 @@
 #define TEST_RATE_X_LSB         (1748)
 #define TEST_ACCEL_Z_LSB        (879)
 #define TEST_DANG_X_LSB         (8589935)
-#define TEST_DVEL_Z_LSB         (4322274)
+#define TEST_DVEL_Z_LSB         (43183277)
 #define TEST_SW1_NOMINAL_25C    (0x1902U)
 #define TEST_SW2_VER_3          (0x0003U)
 #define TEST_ACCEL_1G_MIN_M_S2  (9.75f)
 #define TEST_ACCEL_1G_MAX_M_S2  (9.86f)
+#define TEST_DVEL_1G_MIN_M_S    (0.0975f)
+#define TEST_DVEL_1G_MAX_M_S    (0.0986f)
+
+/* Consecutive RESET_L recovery attempts allowed for a silent sensor */
+#define APP_MAX_LINK_RECOVERY   (3U)
 
 /**
  * @brief   Module-private SM-5800 driver instance handle.
@@ -78,6 +84,13 @@ static sm5800_msg2_eng_t g_last_eng =
  */
 static float g_last_rate_x_deg_s = 0.0f;
 
+/**
+ * @brief   Consecutive link-timeout recoveries since the last good sample.
+ * @req     LLR-SM5800-APP-008
+ * @design  SDD-SM5800-4.7
+ */
+static uint32_t g_link_recovery_count = 0U;
+
 
 /* Private prototypes */
 static sm5800_status_t init_imu_100hz(void);
@@ -85,6 +98,7 @@ static sm5800_status_t verify_raw_to_eng_math(void);
 static sm5800_status_t handle_msg2_and_faults(
     sm5800_msg2_eng_t const * p_eng);
 static sm5800_status_t run_commanded_bit_cycle(void);
+static sm5800_status_t handle_link_faults(void);
 
 /**
  * @brief       PS GIC Interrupt Service Routine bound to PL irq_o (100 Hz).
@@ -142,8 +156,15 @@ int main(void)
             bool is_ready = sm5800_is_msg2_pending(&g_imu_drv);
 
             poll_cycles++;
+            status = handle_link_faults();
 
-            if (is_ready)
+            if (SM5800_OK != status)
+            {
+                /* Sensor stayed silent after bounded recovery attempts */
+                exit_code = 1;
+                is_running = false;
+            }
+            else if (is_ready)
             {
                 sm5800_msg2_eng_t eng_sample = { .timestamp_us = 0U };
 
@@ -162,6 +183,7 @@ int main(void)
                 if (SM5800_OK == status)
                 {
                     sample_count++;
+                    g_link_recovery_count = 0U;
                 }
                 else
                 {
@@ -290,6 +312,14 @@ static sm5800_status_t verify_raw_to_eng_math(void)
         {
             result = SM5800_ERR_PARAM;
         }
+        else if (test_eng.delta_vel_z_m_s < TEST_DVEL_1G_MIN_M_S)
+        {
+            result = SM5800_ERR_PARAM;
+        }
+        else if (test_eng.delta_vel_z_m_s > TEST_DVEL_1G_MAX_M_S)
+        {
+            result = SM5800_ERR_PARAM;
+        }
         else
         {
             result = SM5800_OK;
@@ -376,6 +406,44 @@ static sm5800_status_t run_commanded_bit_cycle(void)
     else
     {
         /* Failed to assert BIT_L; propagate error */
+    }
+
+    return result;
+}
+
+
+/**
+ * @brief       React to fault IRQs latched by the ISR (sensor went silent).
+ * @req         LLR-SM5800-APP-008
+ * @design      SDD-SM5800-4.7
+ * @return      SM5800_OK, error from sm5800_trigger_reset(), or
+ *              SM5800_ERR_TIMEOUT once APP_MAX_LINK_RECOVERY is exhausted.
+ * @note        Not ISR-safe. On LINK_TIMEOUT pulses RESET_L (> 1 ms) so the
+ *              SM-5800 reboots; the FPGA watchdog re-arms and reports again
+ *              if the sensor still sends no valid data.
+ */
+static sm5800_status_t handle_link_faults(void)
+{
+    uint32_t faults = 0U;
+    sm5800_status_t result = sm5800_take_irq_faults(&g_imu_drv, &faults);
+
+    if ((SM5800_OK == result)
+        && (0U != (faults & SM5800_INT_TIMEOUT_MASK)))
+    {
+        if (g_link_recovery_count < APP_MAX_LINK_RECOVERY)
+        {
+            g_link_recovery_count++;
+            result = sm5800_trigger_reset(&g_imu_drv,
+                                          SM5800_RESET_POLL_MAX);
+        }
+        else
+        {
+            result = SM5800_ERR_TIMEOUT;
+        }
+    }
+    else
+    {
+        /* No link timeout; BIT faults are handled per Msg 02 sample */
     }
 
     return result;

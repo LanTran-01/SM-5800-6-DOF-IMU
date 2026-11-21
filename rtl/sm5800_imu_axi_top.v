@@ -25,7 +25,7 @@ module sm5800_imu_axi_top #(
     parameter integer C_DEFAULT_CLK_EN     = 1,           // 1: enable 1 MHz clock out of reset
     parameter integer C_DEFAULT_MSG1_ONLY  = 0,           // 1: default to Msg ID 01-only mode
     parameter integer C_DEFAULT_MSG2_ONLY  = 0,           // 1: default to Msg ID 02-only mode (100 Hz)
-    parameter integer C_DEFAULT_TIMEOUT_US = 5000,        // Data watchdog timeout (us, 5 ms)
+    parameter integer C_DEFAULT_TIMEOUT_US = 30000,       // Data watchdog (us): 3x the 10 ms Msg 02 period
     parameter integer C_S_AXI_DATA_WIDTH   = 32,          // AXI4-Lite data width (32)
     parameter integer C_S_AXI_ADDR_WIDTH   = 8            // AXI4-Lite addr width (>=8)
 ) (
@@ -74,6 +74,20 @@ module sm5800_imu_axi_top #(
     output wire                              imu_bit_l_o,    // -> OC driver -> BIT_L (Pin 12, active-low)
     output wire                              imu_reset_l_o   // -> OC driver -> RESET_L (Pin 18, active-low)
 );
+
+    //--------------------------------------------------------------------------
+    // Elaboration-time parameter guard (Verilog-2001 has no $error):
+    // in 100 Hz MSG2_ONLY mode a watchdog shorter than 12 ms (1.2x the 10 ms
+    // Msg 02 period) would raise a false LINK_TIMEOUT on every frame. Such a
+    // configuration instantiates a module that does not exist, so synthesis /
+    // simulation stops with an error naming the problem.
+    //--------------------------------------------------------------------------
+    generate
+        if ((C_DEFAULT_MSG2_ONLY != 0) && (C_DEFAULT_TIMEOUT_US != 0) &&
+            (C_DEFAULT_TIMEOUT_US < 12000)) begin : g_param_check
+            SM5800_PARAM_ERROR_TIMEOUT_US_BELOW_12000_IN_MSG2_ONLY_MODE u_param_error ();
+        end
+    endgenerate
 
     //--------------------------------------------------------------------------
     // Internal Interconnect Wires
@@ -251,7 +265,11 @@ module sm5800_imu_axi_top #(
         .msg1_valid_o         (msg1_valid_w),
         .msg2_valid_o         (msg2_valid_w),
         .mc_data_valid_o      (mc_data_valid_w),
+        // Spatial-commit strobe is not needed at top level (msg2_valid_o and
+        // INT_STATUS.MSG2_READY already mark every Spatial update).
+        /* verilator lint_off PINCONNECTEMPTY */
         .sp_data_valid_o      (),
+        /* verilator lint_on PINCONNECTEMPTY */
         .imu_fault_pulse_o    (imu_fault_pulse_w),
         .rx_err_pulse_o       (rx_err_pulse_w),
         .seq_err_pulse_o      (seq_err_pulse_w),
