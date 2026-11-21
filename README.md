@@ -38,7 +38,10 @@ IMU/
     ├── README.md                    # Chi tiết nối chân RS-422/OC, bản đồ thanh ghi & hướng dẫn sử dụng
     ├── LLR_SM5800.md                # Đặc tả yêu cầu mức thấp (5 HLR, 66 LLR khớp 1-1 với @req)
     ├── SDD_SM5800.md                # Tài liệu thiết kế hệ thống PL+PS, sơ đồ Mermaid, WCSU, SEU, truy vết
-    └── TEST_REPORT_SM5800.md        # Báo cáo kiểm chứng SVR & bảng ký duyệt cho Team
+    ├── TEST_REPORT_SM5800.md        # Báo cáo kiểm chứng SVR & bảng ký duyệt cho Team
+    └── reviews/                     # Báo cáo rà soát độc lập
+        ├── REVIEW_REPORT_1.md       # Đợt 1: 5 lỗi gốc, lint, chốt tham số
+        └── REVIEW_REPORT_2.md       # Đợt 2: đánh giá "Fix PL-PS IRQ", [T16], bão hòa gyro
 ```
 
 ---
@@ -72,3 +75,4 @@ IMU/
 - **AI Agent hoặc QA vào kiểm tra độc lập:** Bắt đầu từ [AGENT_VERIFICATION_GUIDE.md](AGENT_VERIFICATION_GUIDE.md).
 - **Đặc tả & Thiết kế (DO-178C):** Xem [docs/LLR_SM5800.md](docs/LLR_SM5800.md), [docs/SDD_SM5800.md](docs/SDD_SM5800.md), [docs/TEST_REPORT_SM5800.md](docs/TEST_REPORT_SM5800.md), và [driver/DEVIATION_LOG.md](driver/DEVIATION_LOG.md).
 - **Hướng dẫn nối dây phần cứng & thanh ghi:** Xem [docs/README.md](docs/README.md).
+- **Báo cáo rà soát độc lập:** [Đợt 1](docs/reviews/REVIEW_REPORT_1.md) (5 lỗi gốc, 7 cảnh báo lint) và [Đợt 2](docs/reviews/REVIEW_REPORT_2.md) (đánh giá "Fix PL-PS IRQ", `[T16]`, kiểm tra bão hòa gyro, việc còn lại).
